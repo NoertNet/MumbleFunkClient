@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-cpal = "0.18.2"
 funk-core = { version = "0.1.0", path = "../funk-core" }
 thiserror = "2.0.21"
 tracing = "0.1.44"
+
+# cpal 0.16: proven WASAPI behaviour (0.18 builds streams with an empty channel mask that some
+# Windows devices reject). On Android it uses Oboe (AAudio/OpenSL ES), built by the NDK toolchain.
+cpal = "0.16"

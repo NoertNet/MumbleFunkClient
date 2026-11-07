@@ -2,6 +2,7 @@
 //! server state mirror and (later) voice handling. No UI or OS dependencies.
 
 pub mod client;
+pub mod opus;
 pub mod state;
 pub mod voice;
 pub mod wire;

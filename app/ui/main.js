@@ -24,6 +24,7 @@ function connectArgs(trustNewCert) {
     port: parseInt($('port').value, 10),
     username: $('username').value.trim(),
     password: $('password').value || null,
+    rememberPassword: $('remember').checked,
     trustNewCert,
   };
 }
@@ -139,6 +140,7 @@ $('disconnect-btn').addEventListener('click', async () => {
   await invoke('disconnect');
   state = null; speaking = [];
   show('connect');
+  invoke('load_settings').then((s) => applySettings(s)).catch(() => {});
 });
 
 listen('state', (e) => { state = e.payload; render(); });
@@ -152,8 +154,41 @@ listen('disconnected', (e) => {
   showError(e.payload ? `Verbindung getrennt: ${e.payload}` : 'Verbindung getrennt.');
 });
 
-invoke('load_settings').then((s) => {
-  if (s.host) $('host').value = s.host;
-  if (s.port) $('port').value = s.port;
-  if (s.username) $('username').value = s.username;
-}).catch(() => {});
+let profiles = [];
+
+const profileKey = (p) => `${p.username}@${p.host}:${p.port}`;
+
+function fillForm(p) {
+  $('host').value = p?.host ?? '';
+  $('port').value = p?.port ?? 64738;
+  $('username').value = p?.username ?? '';
+  $('password').value = p?.password ?? '';
+  $('remember').checked = p ? p.password != null : true;
+}
+
+function applySettings(s, selectKey) {
+  profiles = s.profiles ?? [];
+  $('saved').hidden = profiles.length === 0;
+  const sel = $('profile-select');
+  sel.replaceChildren(...profiles.map((p) => {
+    const o = document.createElement('option');
+    o.value = profileKey(p);
+    o.textContent = `${p.username} @ ${p.host}:${p.port}`;
+    return o;
+  }));
+  const key = selectKey ?? s.last ?? (profiles[0] && profileKey(profiles[0]));
+  const cur = profiles.find((p) => profileKey(p) === key);
+  if (cur) sel.value = key;
+  fillForm(cur);
+}
+
+$('profile-select').addEventListener('change', (e) => {
+  fillForm(profiles.find((p) => profileKey(p) === e.target.value));
+});
+$('forget-btn').addEventListener('click', async () => {
+  const key = $('profile-select').value;
+  if (!key) return;
+  applySettings(await invoke('forget_profile', { key }));
+});
+
+invoke('load_settings').then((s) => applySettings(s)).catch(() => {});

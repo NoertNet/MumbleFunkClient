@@ -20,6 +20,7 @@ struct ConnectArgs {
     port: u16,
     username: String,
     password: Option<String>,
+    remember_password: bool,
     /// Accept a changed certificate and replace the stored pin.
     trust_new_cert: bool,
 }
@@ -62,11 +63,19 @@ fn load_settings(app: AppHandle) -> settings::Settings {
     settings::load(&app)
 }
 
+#[tauri::command]
+fn forget_profile(app: AppHandle, key: String) -> settings::Settings {
+    let mut s = settings::load(&app);
+    s.forget(&key);
+    settings::save(&app, &s);
+    s
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(App::default())
-        .invoke_handler(tauri::generate_handler![connect, disconnect, join_channel, ptt, load_settings])
+        .invoke_handler(tauri::generate_handler![connect, disconnect, join_channel, ptt, load_settings, forget_profile])
         .on_window_event(|w, ev| {
             if let tauri::WindowEvent::Destroyed = ev {
                 if let Some(s) = w.app_handle().state::<App>().session.lock().unwrap().take() {

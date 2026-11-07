@@ -6,10 +6,9 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use audiopus::coder::{Decoder, Encoder};
-use audiopus::{Application, Bitrate, Channels, SampleRate};
 use prost::Message;
 
+use crate::opus::{Decoder, Encoder, OpusError};
 use crate::proto::udp::Audio;
 
 pub const SAMPLE_RATE: u32 = 48_000;
@@ -29,7 +28,7 @@ const TAG_AUDIO: u8 = 0;
 #[derive(Debug, thiserror::Error)]
 pub enum VoiceError {
     #[error("opus: {0}")]
-    Opus(#[from] audiopus::Error),
+    Opus(#[from] OpusError),
 }
 
 /// A decoded incoming voice packet (still Opus-compressed).
@@ -88,9 +87,7 @@ pub struct Transmitter {
 
 impl Transmitter {
     pub fn new() -> Result<Self, VoiceError> {
-        let mut enc = Encoder::new(SampleRate::Hz48000, Channels::Mono, Application::Voip)?;
-        enc.set_bitrate(Bitrate::BitsPerSecond(24_000))?;
-        enc.set_vbr(true)?;
+        let enc = Encoder::new_voip_48k_mono(24_000)?;
         Ok(Self { enc, buf: Vec::with_capacity(FRAME_SAMPLES * 2), frame_number: 0, active: false, out: [0; 1275] })
     }
 
@@ -152,7 +149,7 @@ struct Stream {
 impl Stream {
     fn new() -> Result<Self, VoiceError> {
         Ok(Self {
-            dec: Decoder::new(SampleRate::Hz48000, Channels::Mono)?,
+            dec: Decoder::new_48k_mono()?,
             pending: BTreeMap::new(),
             pcm: VecDeque::new(),
             next: None,
@@ -188,14 +185,14 @@ impl Stream {
         while self.pcm.len() < need {
             let Some(next) = self.next else { break };
             let (n, units) = if let Some((data, _)) = self.pending.remove(&next) {
-                let Ok(n) = self.dec.decode(Some(&data[..]), &mut buf[..], false) else {
+                let Ok(n) = self.dec.decode(Some(&data[..]), &mut buf[..]) else {
                     self.next = Some(next + UNITS_PER_FRAME);
                     continue;
                 };
                 (n, (n / (SAMPLE_RATE as usize / 100)) as u64)
             } else if self.pending.range(next..).next().is_some() {
                 // Gap: conceal one frame.
-                let Ok(n) = self.dec.decode(None::<&[u8]>, &mut buf[..FRAME_SAMPLES], false) else { break };
+                let Ok(n) = self.dec.decode(None, &mut buf[..FRAME_SAMPLES]) else { break };
                 (n, UNITS_PER_FRAME)
             } else {
                 break;

@@ -45,10 +45,14 @@ pub struct Audio {
     _output: Stream,
 }
 
+fn rate(c: &StreamConfig) -> u32 {
+    c.sample_rate.0
+}
+
 fn err(what: &'static str, cfg: &StreamConfig, e: impl std::fmt::Display) -> AudioError {
     AudioError::Cpal {
         what,
-        detail: format!("{} Hz, {} ch", cfg.sample_rate, cfg.channels),
+        detail: format!("{} Hz, {} ch", rate(cfg), cfg.channels),
         msg: e.to_string(),
     }
 }
@@ -61,7 +65,7 @@ where
     let ch = cfg.channels as usize;
     let mut mono: Vec<f32> = Vec::with_capacity(4096);
     dev.build_input_stream(
-        cfg.clone(),
+        cfg,
         move |data: &[T], _| {
             mono.clear();
             mono.extend(data.chunks(ch).map(|fr| fr.iter().map(|&s| <f32 as FromSample<T>>::from_sample_(s)).sum::<f32>() / ch as f32));
@@ -79,7 +83,7 @@ where
 {
     let ch = cfg.channels as usize;
     dev.build_output_stream(
-        cfg.clone(),
+        cfg,
         move |data: &mut [T], _| {
             for fr in data.chunks_mut(ch) {
                 fr.fill(<T as FromSample<f32>>::from_sample_(next()));
@@ -105,7 +109,7 @@ impl Audio {
         let in_cfg: StreamConfig = in_conf.config();
         let in_fmt = in_conf.sample_format();
         let sh = shared.clone();
-        let mut rs = Resampler::new(in_cfg.sample_rate, SAMPLE_RATE);
+        let mut rs = Resampler::new(rate(&in_cfg), SAMPLE_RATE);
         let (mut r48, mut pcm) = (Vec::<f32>::new(), Vec::<i16>::new());
         let on_mono = move |mono: &[f32]| {
             // Cheap early-out while PTT is up: no resampling, no encoding.
@@ -141,7 +145,7 @@ impl Audio {
         let out_cfg: StreamConfig = out_conf.config();
         let out_fmt = out_conf.sample_format();
         let sh = shared.clone();
-        let mut rs = Resampler::new(SAMPLE_RATE, out_cfg.sample_rate);
+        let mut rs = Resampler::new(SAMPLE_RATE, rate(&out_cfg));
         let mut ready: VecDeque<f32> = VecDeque::with_capacity(FRAME_SAMPLES * 2);
         let mut last_speaking: Vec<u32> = Vec::new();
         let (mut frame, mut conv) = ([0i16; FRAME_SAMPLES], Vec::<f32>::new());
@@ -179,7 +183,7 @@ impl Audio {
         output.play().map_err(|e| err("audio output", &out_cfg, e))?;
         tracing::info!(
             "audio: input {} Hz {} ch {:?}, output {} Hz {} ch {:?}",
-            in_cfg.sample_rate, in_cfg.channels, in_fmt, out_cfg.sample_rate, out_cfg.channels, out_fmt
+            rate(&in_cfg), in_cfg.channels, in_fmt, rate(&out_cfg), out_cfg.channels, out_fmt
         );
         Ok(Self { _input: input, _output: output })
     }

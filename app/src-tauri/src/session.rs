@@ -11,7 +11,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::ConnectArgs;
-use crate::settings::{self, hex, parse_pin};
+use crate::settings::{self, Profile, hex, parse_pin};
 
 #[derive(Serialize, Clone)]
 pub struct UserDto {
@@ -79,6 +79,20 @@ impl Session {
             e => e.to_string(),
         })?;
 
+        // Remember the server as soon as the login worked, even if audio fails afterwards.
+        stored.pins.entry(key.clone()).and_modify(|p| {
+            if args.trust_new_cert {
+                *p = hex(&client.cert_sha256());
+            }
+        }).or_insert_with(|| hex(&client.cert_sha256()));
+        stored.remember(Profile {
+            host: args.host.clone(),
+            port: args.port,
+            username: args.username.clone(),
+            password: if args.remember_password { args.password.clone().filter(|p| !p.is_empty()) } else { None },
+        });
+        settings::save(&app, &stored);
+
         let shared = Arc::new(Shared { tx: Mutex::new(Transmitter::new().map_err(|e| e.to_string())?), mixer: Mutex::new(Mixer::new()) });
 
         // Audio streams live on their own thread (cpal streams are not Send on every platform).
@@ -119,15 +133,7 @@ impl Session {
             tauri::async_runtime::spawn(async move {
                 while let Some(ev) = events.recv().await {
                     match ev {
-                        Event::Connected { cert_sha256, .. } => {
-                            if pin.is_none() {
-                                stored.pins.insert(key.clone(), hex(&cert_sha256));
-                            }
-                            stored.host = args.host.clone();
-                            stored.port = Some(args.port);
-                            stored.username = args.username.clone();
-                            settings::save(&app, &stored);
-                        }
+                        Event::Connected { .. } => {}
                         Event::ChannelUpdated(_) | Event::UserUpdated(_) | Event::UserRemoved(_) => {
                             let _ = app.emit("state", dto_of(&client));
                         }

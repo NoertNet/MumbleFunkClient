@@ -19,7 +19,7 @@ Die App nutzt das Standardformat der Windows-/Android-Audiogeräte und rechnet s
 
 ## Schnelltest ohne Oberfläche
 
-Voraussetzungen: [Rust](https://rustup.rs) (stable) und CMake (Opus wird beim Bauen mitkompiliert).
+Voraussetzung: [Rust](https://rustup.rs) (stable). Opus ist als reines Rust eingebunden, ein C-Compiler oder CMake ist dafür nicht nötig.
 
 ```bash
 export FUNK_PASSWORD='dein-serverpasswort'
@@ -42,9 +42,9 @@ cargo tauri build      # Installer
 ```
 
 **Linux** (Ubuntu/Debian):
-`sudo apt install libwebkit2gtk-4.1-dev libasound2-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev cmake build-essential`
+`sudo apt install libwebkit2gtk-4.1-dev libasound2-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev build-essential`
 
-**Windows:** Visual Studio Build Tools (Workload „Desktop development with C++“) und CMake; WebView2 ist ab Windows 11 vorhanden.
+**Windows:** Visual Studio Build Tools (Workload „Desktop development with C++“); WebView2 ist ab Windows 11 vorhanden.
 
 **Android:** Android Studio mit SDK und NDK, Umgebungsvariablen `ANDROID_HOME` und `NDK_HOME`, dann:
 ```bash
@@ -57,7 +57,7 @@ Die Android-Teile (Mikrofon-Berechtigung, Foreground-Service für Empfang bei au
 
 ## Bedienung
 
-Server, Port, Name (und Passwort) eintragen, verbinden. Kanal antippen zum Wechseln. Den großen Knopf gedrückt halten
+Server, Port, Name (und Passwort) eintragen, verbinden. Erfolgreiche Server werden gespeichert und stehen beim nächsten Start unter „Gespeicherte Server“ bereit; das Passwort nur, wenn das Häkchen gesetzt ist. Kanal antippen zum Wechseln. Den großen Knopf gedrückt halten
 (oder Leertaste) zum Senden; beim Loslassen wird das Ende der Übertragung an den Server gemeldet.
 Beim ersten Verbinden merkt sich die App den Zertifikat-Fingerabdruck des Servers; ändert er sich, fragt sie nach.
-Das Passwort wird nicht gespeichert.
+Gespeichert wird unter dem App-Konfigurationsordner in `settings.json`; ein Passwort steht dort unverschlüsselt (Anbindung an den System-Schlüsselbund folgt).

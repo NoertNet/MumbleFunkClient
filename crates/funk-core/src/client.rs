@@ -75,9 +75,15 @@ type Outgoing = (u16, Vec<u8>);
 pub struct Client {
     tx: mpsc::Sender<Outgoing>,
     state: Arc<RwLock<ServerState>>,
+    cert_sha256: [u8; 32],
 }
 
 impl Client {
+    /// SHA-256 of the server certificate seen during the TLS handshake.
+    pub fn cert_sha256(&self) -> [u8; 32] {
+        self.cert_sha256
+    }
+
     pub fn state(&self) -> ServerState {
         self.state.read().unwrap().clone()
     }
@@ -213,7 +219,7 @@ pub async fn connect(cfg: Config) -> Result<(Client, mpsc::Receiver<Event>), Err
     let (tx, rx) = mpsc::channel::<Outgoing>(256);
     tokio::spawn(writer(wr, rx));
     tokio::spawn(reader(rd, state.clone(), ev_tx));
-    Ok((Client { tx, state }, ev_rx))
+    Ok((Client { tx, state, cert_sha256 }, ev_rx))
 }
 
 async fn writer<W: AsyncWrite + Unpin>(mut wr: WriteHalf<W>, mut rx: mpsc::Receiver<Outgoing>) {

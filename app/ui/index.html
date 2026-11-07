@@ -10,10 +10,19 @@
   <main id="connect" class="screen">
     <h1>Mumble&nbsp;Funk</h1>
     <form id="connect-form" autocomplete="off">
+      <div id="saved" hidden>
+        <label>Gespeicherte Server
+          <span class="row">
+            <select id="profile-select"></select>
+            <button id="forget-btn" type="button" class="ghost" title="Diesen gespeicherten Server löschen">Vergessen</button>
+          </span>
+        </label>
+      </div>
       <label>Server <input id="host" required placeholder="funk.example.org" autocapitalize="off" spellcheck="false"></label>
       <label>Port <input id="port" type="number" min="1" max="65535" value="64738" required></label>
       <label>Rufzeichen / Name <input id="username" required autocapitalize="off" spellcheck="false"></label>
       <label>Passwort <input id="password" type="password" placeholder="optional"></label>
+      <label class="check"><input id="remember" type="checkbox" checked> Passwort auf diesem Gerät speichern <small>(unverschlüsselt)</small></label>
       <button id="connect-btn" type="submit">Verbinden</button>
       <p id="error" role="alert" hidden></p>
       <div id="pin-box" hidden>
