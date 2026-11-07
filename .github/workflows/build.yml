@@ -25,6 +25,15 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev libxdo-dev cmake
       - name: Tests (core, audio, probe)
         run: cargo test --workspace
+      - name: Build funk-probe
+        run: cargo build --release -p funk-probe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: funk-probe-${{ runner.os }}
+          path: |
+            target/release/funk-probe
+            target/release/funk-probe.exe
+          if-no-files-found: error
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
       - name: Build app
