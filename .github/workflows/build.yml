@@ -60,20 +60,29 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - run: npm install -g @tauri-apps/cli@^2
+      # Gradle's Rust plugin calls the CLI as `cargo tauri`; the npm shim is not found there.
+      - name: Cache cargo-tauri
+        id: tauri-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: cargo-tauri-2-${{ runner.os }}
+      - name: Install cargo-tauri
+        if: steps.tauri-cli.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "^2" --locked
       - name: Locate NDK
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "NDK_HOME=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
       - name: Init Android project
         working-directory: app/src-tauri
-        run: tauri android init --ci
+        run: cargo tauri android init --ci
       - name: Apply Funk Android patches
         if: hashFiles('app/android-patch.py') != ''
         run: python3 app/android-patch.py
       - name: Build debug APK
         working-directory: app/src-tauri
-        run: tauri android build --apk --debug --target aarch64 --ci
+        run: cargo tauri android build --apk --debug --target aarch64 --ci
       - uses: actions/upload-artifact@v4
         with:
           name: mumble-funk-android-debug

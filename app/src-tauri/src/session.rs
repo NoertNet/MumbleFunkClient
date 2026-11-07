@@ -105,10 +105,10 @@ impl Session {
             std::thread::spawn(move || {
                 let started = Audio::start(
                     shared,
-                    Box::new(move |p| {
+                    Arc::new(move |p| {
                         c.try_send_voice(p);
                     }),
-                    Box::new(move |info| {
+                    Arc::new(move |info| {
                         let _ = a.emit("speaking", info.speaking);
                     }),
                 );
