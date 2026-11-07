@@ -199,6 +199,9 @@ impl Session {
                                 Event::Text { actor, text } => {
                                     let _ = app.emit("text", serde_json::json!({ "actor": actor, "text": text }));
                                 }
+                                Event::Latency(ms) => {
+                                    let _ = app.emit("latency", ms);
+                                }
                                 Event::PermissionDenied(r) => {
                                     let _ = app.emit("notice", r);
                                 }

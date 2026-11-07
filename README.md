@@ -32,7 +32,14 @@ Simplex/Busy zu beobachten. Zweites Terminal mit anderem Benutzer startet man oh
 
 ## App bauen und starten
 
-Fertige Programme liefert der GitHub-Workflow `build` (Reiter *Actions* → Artefakte). Lokal:
+**Fertige Programme** stehen unter *Releases* (rechts auf der GitHub-Startseite): `latest-dev` ist die jeweils neueste
+Entwicklungsversion mit `MumbleFunk-Android.apk`, `MumbleFunk-Windows-setup.exe` und Prüfsummen. Ein Tag wie `v0.2.0`
+erzeugt automatisch ein reguläres Release.
+
+*Android-Signatur:* Damit eine neue APK über die alte installiert werden kann, muss sie immer mit demselben Schlüssel
+signiert sein. CI erzeugt dafür beim ersten Lauf einen Schlüssel und legt ihn im Actions-Cache ab (nichts davon liegt im
+Repository). Dauerhaft und unabhängig vom Cache wird es, wenn du die Repository-Secrets `ANDROID_KEYSTORE_BASE64` und
+`ANDROID_KEYSTORE_PASSWORD` anlegst; dann nutzt der Build diese. Lokal bauen:
 
 ```bash
 cargo install tauri-cli --version "^2" --locked

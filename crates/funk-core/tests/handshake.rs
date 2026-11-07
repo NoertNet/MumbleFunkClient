@@ -47,8 +47,13 @@ async fn handshake_state_and_join() {
         write_frame(&mut s, MessageType::UserState as u16, &u.encode_to_vec()).await.unwrap();
         let sync = ServerSync { session: Some(9), welcome_text: Some("hi".into()), ..Default::default() };
         write_frame(&mut s, MessageType::ServerSync as u16, &sync.encode_to_vec()).await.unwrap();
-        // Expect the client's channel join.
-        let (t, p) = read_frame(&mut s).await.unwrap();
+        // Expect the client's channel join (pings may arrive first; ignore them).
+        let (t, p) = loop {
+            let f = read_frame(&mut s).await.unwrap();
+            if f.0 != MessageType::Ping as u16 {
+                break f;
+            }
+        };
         assert_eq!(t, MessageType::UserState as u16);
         let m = UserState::decode(p).unwrap();
         assert_eq!((m.session, m.channel_id), (Some(9), Some(1)));
@@ -118,4 +123,37 @@ async fn closed_port_reports_unreachable_with_address() {
         Err(e) => panic!("unexpected error {e}"),
         Ok(_) => panic!("must not connect"),
     }
+}
+
+#[tokio::test]
+async fn ping_reply_becomes_latency_event() {
+    let (acc, _) = acceptor();
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        let (s, _) = l.accept().await.unwrap();
+        let mut s = acc.accept(s).await.unwrap();
+        let _ = read_frame(&mut s).await;
+        let _ = read_frame(&mut s).await;
+        let sync = ServerSync { session: Some(1), ..Default::default() };
+        write_frame(&mut s, MessageType::ServerSync as u16, &sync.encode_to_vec()).await.unwrap();
+        // Echo every ping back unchanged, like a real server does.
+        loop {
+            let Ok((t, p)) = read_frame(&mut s).await else { break };
+            if t == MessageType::Ping as u16 {
+                write_frame(&mut s, t, &p).await.unwrap();
+            }
+        }
+    });
+    let (_client, mut ev) = connect(cfg(port, None)).await.unwrap();
+    let ms = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Event::Latency(ms) = ev.recv().await.unwrap() {
+                return ms;
+            }
+        }
+    })
+    .await
+    .expect("no latency event");
+    assert!(ms < 1000, "implausible latency {ms}");
 }

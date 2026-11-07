@@ -1,3 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "app/src-tauri"]
+
+# Smaller and faster binaries; matters for the always-on phone app.
+[profile.release]
+lto = "thin"
+strip = true

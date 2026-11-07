@@ -3,57 +3,89 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0e100d">
   <title>Mumble Funk</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- ============ Einschalten / Verbinden ============ -->
   <main id="connect" class="screen">
-    <h1>Mumble&nbsp;Funk</h1>
-    <form id="connect-form" autocomplete="off">
-      <div id="saved" hidden>
-        <label>Gespeicherte Server
-          <span class="row">
-            <select id="profile-select"></select>
-            <button id="forget-btn" type="button" class="ghost" title="Diesen gespeicherten Server löschen">Vergessen</button>
-          </span>
-        </label>
+    <div class="device">
+      <div class="antenna" aria-hidden="true"></div>
+      <div class="lcd boot">
+        <div class="lcd-row small"><span>MF-1 · SIMPLEX</span><span>AUS</span></div>
+        <div class="lcd-big">MUMBLE FUNK</div>
+        <div class="lcd-row small"><span id="busy" role="status" hidden>VERBINDE …</span><span id="idle-msg">BEREIT ZUM EINSCHALTEN</span></div>
       </div>
-      <label>Server <input id="host" required placeholder="funk.example.org" autocapitalize="off" spellcheck="false"></label>
-      <label>Port <input id="port" type="number" min="1" max="65535" value="64738" required></label>
-      <label>Rufzeichen / Name <input id="username" required autocapitalize="off" spellcheck="false"></label>
-      <label>Passwort <input id="password" type="password" placeholder="optional"></label>
-      <label class="check"><input id="remember" type="checkbox" checked> Passwort auf diesem Gerät speichern <small>(unverschlüsselt)</small></label>
-      <button id="connect-btn" type="submit">Verbinden</button>
-      <p id="busy" role="status" hidden>Verbinde …</p>
-      <p id="error" role="alert" hidden></p>
-      <div id="pin-box" hidden>
-        <p>Das Zertifikat des Servers hat sich geändert. Das kann ein Serverumzug sein – oder ein Angriff.</p>
-        <button id="trust-btn" type="button" class="danger">Neuem Zertifikat vertrauen</button>
-      </div>
-    </form>
+
+      <form id="connect-form" autocomplete="off">
+        <div id="saved" hidden>
+          <label>Speicherplatz
+            <span class="row">
+              <select id="profile-select"></select>
+              <button id="forget-btn" type="button" class="key small" title="Diesen Speicherplatz löschen">Löschen</button>
+            </span>
+          </label>
+        </div>
+        <label>Server <input id="host" required placeholder="funk.example.org" autocapitalize="off" spellcheck="false"></label>
+        <label>Port <input id="port" type="number" min="1" max="65535" value="64738" required></label>
+        <label>Rufzeichen <input id="username" required autocapitalize="off" spellcheck="false"></label>
+        <label>Passwort <input id="password" type="password" placeholder="optional"></label>
+        <label class="check"><input id="remember" type="checkbox" checked> Passwort speichern <small>(unverschlüsselt)</small></label>
+        <button id="connect-btn" type="submit" class="key power">Einschalten</button>
+        <p id="error" role="alert" hidden></p>
+        <div id="pin-box" hidden>
+          <p>Das Zertifikat des Servers hat sich geändert. Das kann ein Serverumzug sein – oder ein Angriff.</p>
+          <button id="trust-btn" type="button" class="key danger">Neuem Zertifikat vertrauen</button>
+        </div>
+      </form>
+      <div class="grille" aria-hidden="true"></div>
+    </div>
   </main>
 
-  <main id="radio" class="screen" hidden>
-    <header>
-      <div><strong id="server-name"></strong><small id="welcome"></small></div>
-      <button id="disconnect-btn" type="button" class="ghost">Trennen</button>
-    </header>
+  <!-- ============ Funkgerät ============ -->
+  <main id="radio" class="screen" data-mode="idle" hidden>
+    <div class="device">
+      <div class="antenna" aria-hidden="true"></div>
 
-    <section id="status" aria-live="polite">Kanal frei</section>
+      <div class="topbar">
+        <div id="signal" class="signal" role="img" aria-label="Verbindung: unbekannt">
+          <span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <span id="ms" class="ms">— ms</span>
+        </div>
+        <div class="lamps" aria-hidden="true">
+          <span class="lamp net" id="lamp-net"><i></i>NET</span>
+          <span class="lamp rx" id="lamp-rx"><i></i>RX</span>
+          <span class="lamp tx" id="lamp-tx"><i></i>TX</span>
+        </div>
+      </div>
 
-    <button id="ptt" type="button" aria-label="Push to talk">
-      <span id="ptt-label">SPRECHEN</span>
-    </button>
-    <p class="hint">Gedrückt halten oder Leertaste</p>
+      <div class="lcd" aria-live="polite">
+        <div class="lcd-row small"><span id="server-name"></span><span id="chan-idx">KANAL</span></div>
+        <div id="chan-name" class="lcd-big">—</div>
+        <div id="mode" class="lcd-mode">BEREIT</div>
+        <div id="who" class="lcd-row small"><span id="who-text"></span></div>
+        <ul id="users" class="lcd-users"></ul>
+      </div>
 
-    <section>
-      <h2>Kanäle</h2>
-      <ul id="channels"></ul>
-    </section>
-    <section>
-      <h2>Im Kanal</h2>
-      <ul id="users"></ul>
-    </section>
+      <div class="chan-keys">
+        <button id="chan-prev" type="button" class="key" aria-label="Vorheriger Kanal">◀ KANAL</button>
+        <button id="chan-list-btn" type="button" class="key small" aria-expanded="false">LISTE</button>
+        <button id="chan-next" type="button" class="key" aria-label="Nächster Kanal">KANAL ▶</button>
+      </div>
+      <ul id="channels" class="chan-list" hidden></ul>
+
+      <button id="ptt" type="button" aria-pressed="false" aria-label="Push to talk, gedrückt halten zum Sprechen">
+        <span id="ptt-label">PTT</span>
+        <small>gedrückt halten · Leertaste</small>
+      </button>
+
+      <div class="grille" aria-hidden="true"></div>
+      <div class="foot">
+        <span class="plate">MUMBLE·FUNK MF-1</span>
+        <button id="disconnect-btn" type="button" class="key small">AUS</button>
+      </div>
+    </div>
   </main>
   <script src="main.js"></script>
 </body>

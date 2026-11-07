@@ -17,7 +17,8 @@ use crate::proto::{self, Authenticate, Version};
 use crate::state::ServerState;
 use crate::wire::{MessageType, WireError, read_frame, write_frame};
 
-const PING_INTERVAL: Duration = Duration::from_secs(15);
+/// Also drives the latency readout, so keep it short; a ping is a few bytes.
+const PING_INTERVAL: Duration = Duration::from_secs(4);
 const DNS_TIMEOUT: Duration = Duration::from_secs(8);
 const TCP_TIMEOUT: Duration = Duration::from_secs(8);
 const TLS_TIMEOUT: Duration = Duration::from_secs(10);
@@ -76,6 +77,8 @@ pub enum Event {
     /// `PluginDataTransmission` from the server or another user.
     PluginData { sender: Option<u32>, data_id: String, data: Bytes },
     PermissionDenied(String),
+    /// Round-trip time to the server in milliseconds, from the latest ping reply.
+    Latency(u32),
     Disconnected(Option<String>),
 }
 
@@ -130,6 +133,10 @@ impl Client {
 struct Verifier {
     pin: Option<[u8; 32]>,
     provider: Arc<rustls::crypto::CryptoProvider>,
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 fn sha256(der: &[u8]) -> [u8; 32] {
@@ -270,9 +277,7 @@ async fn writer<W: AsyncWrite + Unpin>(mut wr: WriteHalf<W>, mut rx: mpsc::Recei
                 None => break,
             },
             _ = tick.tick() => {
-                let ts = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
-                let p = proto::Ping { timestamp: Some(ts), ..Default::default() }.encode_to_vec();
+                let p = proto::Ping { timestamp: Some(now_millis()), ..Default::default() }.encode_to_vec();
                 if write_frame(&mut wr, MessageType::Ping as u16, &p).await.is_err() { break }
             }
         }
@@ -329,6 +334,10 @@ async fn dispatch(state: &RwLock<ServerState>, ev: &mpsc::Sender<Event>, ty: u16
         MessageType::PermissionDenied => proto::PermissionDenied::decode(payload)
             .ok()
             .map(|m| Event::PermissionDenied(m.reason.unwrap_or_default())),
+        MessageType::Ping => proto::Ping::decode(payload).ok().and_then(|p| p.timestamp).map(|sent| {
+            let now = now_millis();
+            Event::Latency(now.saturating_sub(sent).min(u32::MAX as u64) as u32)
+        }),
         MessageType::UdpTunnel => Some(Event::Voice(payload)),
         MessageType::PluginData => proto::PluginDataTransmission::decode(payload).ok().map(|m| Event::PluginData {
             sender: m.sender_session,

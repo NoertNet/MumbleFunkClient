@@ -120,6 +120,7 @@ async fn main() -> Result<()> {
                 Some(Event::Connected { cert_sha256, .. }) => println!("cert sha256: {}", hex(&cert_sha256)),
                 Some(Event::Text { actor, text }) => println!("text from {actor:?}: {text}"),
                 Some(Event::PermissionDenied(r)) => println!("permission denied: {r}"),
+                Some(Event::Latency(ms)) => println!("latency: {ms} ms"),
                 Some(Event::Disconnected(r)) => { println!("disconnected: {r:?}"); break }
                 Some(e) => println!("{e:?}"),
                 None => break,

@@ -9,6 +9,11 @@ build and runs this script afterwards. It is idempotent and fails loudly if the 
   the home network; they just time out.
 - a foreground service (FunkService) that keeps the process alive and shows a status notification
   that opens the app; Rust updates its text through FunkBridge (see src/android.rs).
+- signing: builds are signed with the key named by FUNK_KEYSTORE / FUNK_KEYSTORE_PASSWORD (set by
+  CI from a repository secret or a cached, CI-generated key; nothing secret is committed). A stable
+  key lets a new APK update the installed app. Without those variables the default debug key is used.
+- R8 keep rules: FunkBridge is looked up by name from Rust (JNI), release minification would
+  otherwise strip it.
 """
 import pathlib
 import sys
@@ -17,6 +22,8 @@ ROOT = pathlib.Path(__file__).resolve().parent / "src-tauri" / "gen" / "android"
 MANIFEST = ROOT / "AndroidManifest.xml"
 KOTLIN_DIR = ROOT / "java" / "net" / "noert" / "mumblefunk"
 ACTIVITY = KOTLIN_DIR / "MainActivity.kt"
+GRADLE = ROOT.parent.parent / "build.gradle.kts"
+PROGUARD = ROOT.parent.parent / "proguard-funk.pro"
 
 PERMISSIONS = [
     "android.permission.RECORD_AUDIO",
@@ -212,6 +219,32 @@ class FunkService : Service() {
 """
 
 
+SIGNING_BLOCK = """    signingConfigs {
+        create("funk") {
+            // Provided by CI; see .github/workflows/build.yml ("Prepare signing key").
+            val keystore = System.getenv("FUNK_KEYSTORE")
+            if (keystore != null) {
+                storeFile = file(keystore)
+                storePassword = System.getenv("FUNK_KEYSTORE_PASSWORD")
+                keyAlias = "funk"
+                keyPassword = System.getenv("FUNK_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+"""
+
+SIGNING_LINE = (
+    '\n            signingConfig = signingConfigs.getByName('
+    'if (System.getenv("FUNK_KEYSTORE") != null) "funk" else "debug")'
+)
+
+PROGUARD_RULES = """# Looked up by name from Rust via JNI (src/android.rs); must survive minification.
+-keep class net.noert.mumblefunk.FunkBridge { *; }
+-keep class net.noert.mumblefunk.FunkService { *; }
+-keep class net.noert.mumblefunk.MainActivity { *; }
+"""
+
+
 def fail(msg: str) -> None:
     print(f"android-patch: {msg}", file=sys.stderr)
     sys.exit(1)
@@ -242,9 +275,26 @@ def patch_activity() -> None:
     (KOTLIN_DIR / "FunkService.kt").write_text(FUNK_SERVICE_KT, encoding="utf-8")
 
 
-for p in (MANIFEST, ACTIVITY):
+def patch_gradle() -> None:
+    text = GRADLE.read_text(encoding="utf-8")
+    if 'create("funk")' not in text:
+        anchor = "    buildTypes {"
+        if anchor not in text:
+            fail("buildTypes anchor not found in build.gradle.kts (template changed?)")
+        text = text.replace(anchor, SIGNING_BLOCK + anchor, 1)
+        for build_type in ("debug", "release"):
+            head = f'getByName("{build_type}") {{'
+            if head not in text:
+                fail(f"{head} not found in build.gradle.kts (template changed?)")
+            text = text.replace(head, head + SIGNING_LINE, 1)
+        GRADLE.write_text(text, encoding="utf-8")
+    PROGUARD.write_text(PROGUARD_RULES, encoding="utf-8")
+
+
+for p in (MANIFEST, ACTIVITY, GRADLE):
     if not p.exists():
         fail(f"{p} not found - run `cargo tauri android init` first")
 patch_manifest()
 patch_activity()
+patch_gradle()
 print("android-patch: applied")
