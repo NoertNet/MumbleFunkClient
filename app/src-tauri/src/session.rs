@@ -36,6 +36,13 @@ pub struct StateDto {
     channels: Vec<ChannelDto>,
 }
 
+/// Android 17+ blocks connections to the home network unless the user allows it.
+#[cfg(target_os = "android")]
+const ANDROID_HINT: &str =
+    " Android: Prüfe in den App-Einstellungen unter Berechtigungen, ob „Geräte im lokalen Netzwerk“ erlaubt ist.";
+#[cfg(not(target_os = "android"))]
+const ANDROID_HINT: &str = "";
+
 pub struct Session {
     client: Client,
     shared: Arc<Shared>,
@@ -78,9 +85,10 @@ impl Session {
             Error::Rejected(r) => format!("Server hat die Anmeldung abgelehnt: {r}"),
             Error::Dns(m) => format!("Server-Adresse nicht gefunden ({m}). Stimmt der Servername?"),
             Error::Unreachable(d) => format!(
-                "Server nicht erreichbar: {d}. Prüfe Adresse, Port und Firewall, und ob dieses Gerät im richtigen Netz ist (WLAN/Mobilfunk)."
+                "Server nicht erreichbar: {d}. Prüfe Adresse, Port und Firewall, und ob dieses Gerät im richtigen Netz ist (WLAN/Mobilfunk).{}",
+                ANDROID_HINT
             ),
-            Error::Timeout(stage) => format!("Zeitüberschreitung bei: {stage}. Der Server antwortet nicht rechtzeitig."),
+            Error::Timeout(stage) => format!("Zeitüberschreitung bei: {stage}. Der Server antwortet nicht rechtzeitig.{ANDROID_HINT}"),
             e => e.to_string(),
         })?;
 

@@ -4,7 +4,9 @@
 The generated project (app/src-tauri/gen/android) is not committed, so CI re-creates it on every
 build and runs this script afterwards. It is idempotent and fails loudly if the template changes.
 
-Currently: microphone permission (manifest + runtime request).
+Currently: microphone permission and Android 17 "local network" permission (manifest + runtime
+request). Without ACCESS_LOCAL_NETWORK an app targeting SDK 37 cannot open TCP connections to
+servers on the home network; they just time out.
 """
 import pathlib
 import sys
@@ -16,27 +18,38 @@ ACTIVITY = ROOT / "java" / "net" / "noert" / "mumblefunk" / "MainActivity.kt"
 PERMISSIONS = [
     "android.permission.RECORD_AUDIO",
     "android.permission.MODIFY_AUDIO_SETTINGS",
+    "android.permission.ACCESS_LOCAL_NETWORK",
 ]
 
 ACTIVITY_KT = """package net.noert.mumblefunk
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 
 class MainActivity : TauriActivity() {
-  // Result is not needed here: the app reports a clear audio error if the permission is missing.
-  private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+  // Results are not needed here: the app reports a clear error if something is missing.
+  private val permissions =
+    registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+
+  private fun missingPermissions(): Array<String> {
+    val wanted = mutableListOf(Manifest.permission.RECORD_AUDIO)
+    // Android 17+: reaching servers on the local network needs its own runtime permission.
+    if (Build.VERSION.SDK_INT >= 37) wanted.add("android.permission.ACCESS_LOCAL_NETWORK")
+    return wanted
+      .filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
+      .toTypedArray()
+  }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
-    if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-      micPermission.launch(Manifest.permission.RECORD_AUDIO)
-    }
+    val missing = missingPermissions()
+    if (missing.isNotEmpty()) permissions.launch(missing)
   }
 }
 """
