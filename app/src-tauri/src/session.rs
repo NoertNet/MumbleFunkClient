@@ -76,6 +76,11 @@ impl Session {
         let (client, mut events) = funk_core::connect(cfg).await.map_err(|e| match e {
             Error::PinMismatch => "PIN_MISMATCH".to_string(),
             Error::Rejected(r) => format!("Server hat die Anmeldung abgelehnt: {r}"),
+            Error::Dns(m) => format!("Server-Adresse nicht gefunden ({m}). Stimmt der Servername?"),
+            Error::Unreachable(d) => format!(
+                "Server nicht erreichbar: {d}. Prüfe Adresse, Port und Firewall, und ob dieses Gerät im richtigen Netz ist (WLAN/Mobilfunk)."
+            ),
+            Error::Timeout(stage) => format!("Zeitüberschreitung bei: {stage}. Der Server antwortet nicht rechtzeitig."),
             e => e.to_string(),
         })?;
 

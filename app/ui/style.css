@@ -23,6 +23,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
 button { background: var(--accent); color: #1a1205; border: 0; border-radius: 8px; padding: 12px 16px; font-size: 1rem; font-weight: 600; cursor: pointer; }
 button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); padding: 8px 12px; font-weight: 500; }
 button.danger { background: var(--tx); color: #fff; }
+#busy { color: var(--accent); margin: 0; }
 #error { color: #ff8a8e; margin: 0; }
 #pin-box { border: 1px solid var(--tx); border-radius: 8px; padding: 12px; }
 #pin-box p { margin: 0 0 10px; }

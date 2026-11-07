@@ -108,3 +108,14 @@ async fn reject_is_reported() {
         Ok(_) => panic!("must not connect"),
     }
 }
+
+#[tokio::test]
+async fn closed_port_reports_unreachable_with_address() {
+    // Bind then drop to get a port that is guaranteed closed.
+    let port = TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap().port();
+    match connect(cfg(port, None)).await {
+        Err(Error::Unreachable(d)) => assert!(d.contains(&port.to_string()), "{d}"),
+        Err(e) => panic!("unexpected error {e}"),
+        Ok(_) => panic!("must not connect"),
+    }
+}

@@ -18,6 +18,10 @@ use crate::state::ServerState;
 use crate::wire::{MessageType, WireError, read_frame, write_frame};
 
 const PING_INTERVAL: Duration = Duration::from_secs(15);
+const DNS_TIMEOUT: Duration = Duration::from_secs(8);
+const TCP_TIMEOUT: Duration = Duration::from_secs(8);
+const TLS_TIMEOUT: Duration = Duration::from_secs(10);
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(15);
 /// Protocol version we announce (Mumble 1.5.0).
 const VERSION_V1: u32 = (1 << 16) | (5 << 8);
 const VERSION_V2: u64 = (1 << 48) | (5 << 32);
@@ -50,6 +54,13 @@ pub enum Error {
     Rejected(String),
     #[error("connection closed")]
     Closed,
+    #[error("could not resolve server address: {0}")]
+    Dns(String),
+    /// TCP connect failed for every address the name resolved to; lists each attempt.
+    #[error("server unreachable: {0}")]
+    Unreachable(String),
+    #[error("timeout during {0}")]
+    Timeout(&'static str),
 }
 
 #[derive(Debug)]
@@ -156,6 +167,31 @@ impl ServerCertVerifier for Verifier {
     }
 }
 
+/// Resolve `host` and connect to the first address that answers. Every step has a timeout and the
+/// error names what failed, because "nothing happens" is the worst possible failure mode on a phone.
+async fn tcp_connect(host: &str, port: u16) -> Result<TcpStream, Error> {
+    let addrs: Vec<std::net::SocketAddr> = match tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host((host, port))).await {
+        Ok(Ok(it)) => it.collect(),
+        Ok(Err(e)) => return Err(Error::Dns(format!("{host}: {e}"))),
+        Err(_) => return Err(Error::Timeout("address lookup")),
+    };
+    if addrs.is_empty() {
+        return Err(Error::Dns(format!("{host}: no addresses")));
+    }
+    let mut failures = Vec::new();
+    for a in addrs {
+        match tokio::time::timeout(TCP_TIMEOUT, TcpStream::connect(a)).await {
+            Ok(Ok(s)) => {
+                s.set_nodelay(true)?;
+                return Ok(s);
+            }
+            Ok(Err(e)) => failures.push(format!("{a}: {e}")),
+            Err(_) => failures.push(format!("{a}: no answer within {}s", TCP_TIMEOUT.as_secs())),
+        }
+    }
+    Err(Error::Unreachable(failures.join("; ")))
+}
+
 /// Connect, authenticate and start the session tasks. Returns once the server
 /// has sent `ServerSync`, so `Client::state()` already holds channels and users.
 pub async fn connect(cfg: Config) -> Result<(Client, mpsc::Receiver<Event>), Error> {
@@ -165,12 +201,12 @@ pub async fn connect(cfg: Config) -> Result<(Client, mpsc::Receiver<Event>), Err
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(Verifier { pin: cfg.pinned_sha256, provider }))
         .with_no_client_auth();
-    let tcp = TcpStream::connect((cfg.host.as_str(), cfg.port)).await?;
-    tcp.set_nodelay(true)?;
+    let tcp = tcp_connect(&cfg.host, cfg.port).await?;
     let name = ServerName::try_from(cfg.host.clone()).map_err(|_| Error::ServerName)?;
-    let stream = TlsConnector::from(Arc::new(tls)).connect(name, tcp).await.map_err(|e| {
-        if e.to_string().contains("pin mismatch") { Error::PinMismatch } else { Error::Io(e) }
-    })?;
+    let stream = tokio::time::timeout(TLS_TIMEOUT, TlsConnector::from(Arc::new(tls)).connect(name, tcp))
+        .await
+        .map_err(|_| Error::Timeout("TLS handshake"))?
+        .map_err(|e| if e.to_string().contains("pin mismatch") { Error::PinMismatch } else { Error::Io(e) })?;
     let cert_sha256 = stream
         .get_ref()
         .1
@@ -201,19 +237,22 @@ pub async fn connect(cfg: Config) -> Result<(Client, mpsc::Receiver<Event>), Err
     let (ev_tx, ev_rx) = mpsc::channel(256);
 
     // Handshake: consume messages until ServerSync (or Reject).
-    let session = loop {
-        let (ty, payload) = read_frame(&mut rd).await.map_err(|e| match e {
-            WireError::Io(io) if io.kind() == std::io::ErrorKind::UnexpectedEof => Error::Closed,
-            e => e.into(),
-        })?;
-        if ty == MessageType::Reject as u16 {
-            let r = proto::Reject::decode(payload).unwrap_or_default();
-            return Err(Error::Rejected(r.reason.unwrap_or_else(|| "unknown".into())));
-        }
-        if dispatch(&state, &ev_tx, ty, payload).await == Some(MessageType::ServerSync) {
-            break state.read().unwrap().own_session.unwrap_or(0);
+    let login = async {
+        loop {
+            let (ty, payload) = read_frame(&mut rd).await.map_err(|e| match e {
+                WireError::Io(io) if io.kind() == std::io::ErrorKind::UnexpectedEof => Error::Closed,
+                e => e.into(),
+            })?;
+            if ty == MessageType::Reject as u16 {
+                let r = proto::Reject::decode(payload).unwrap_or_default();
+                return Err(Error::Rejected(r.reason.unwrap_or_else(|| "unknown".into())));
+            }
+            if dispatch(&state, &ev_tx, ty, payload).await == Some(MessageType::ServerSync) {
+                return Ok(state.read().unwrap().own_session.unwrap_or(0));
+            }
         }
     };
+    let session = tokio::time::timeout(LOGIN_TIMEOUT, login).await.map_err(|_| Error::Timeout("login"))??;
     let _ = ev_tx.send(Event::Connected { session, cert_sha256 }).await;
 
     let (tx, rx) = mpsc::channel::<Outgoing>(256);

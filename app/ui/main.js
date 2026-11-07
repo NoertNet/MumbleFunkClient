@@ -33,6 +33,8 @@ async function doConnect(trustNewCert) {
   showError('');
   $('pin-box').hidden = true;
   $('connect-btn').disabled = true;
+  $('busy').textContent = `Verbinde mit ${$('host').value.trim()}:${$('port').value} …`;
+  $('busy').hidden = false;
   lastArgs = connectArgs(trustNewCert);
   try {
     state = await invoke('connect', { args: lastArgs });
@@ -44,6 +46,7 @@ async function doConnect(trustNewCert) {
     else showError(String(e));
   } finally {
     $('connect-btn').disabled = false;
+    $('busy').hidden = true;
   }
 }
 
