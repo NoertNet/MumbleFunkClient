@@ -15,7 +15,7 @@ Rust-Kern + [Tauri 2](https://tauri.app)-Oberfläche für Windows, Linux und And
 
 Funktioniert gegen einen normalen Mumble-Server (Verbinden, Kanalwechsel, Senden/Empfangen per Protobuf-Voice
 über TCP). **Noch nicht** gegen den Funk-Server getestet und noch nicht mit echtem Mikrofon/Lautsprecher.
-Geräte müssen aktuell 48 kHz unterstützen (kein Resampling).
+Die App nutzt das Standardformat der Windows-/Android-Audiogeräte und rechnet selbst auf 48 kHz um.
 
 ## Schnelltest ohne Oberfläche
 
