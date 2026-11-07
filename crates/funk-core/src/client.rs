@@ -97,6 +97,12 @@ impl Client {
         self.send(MessageType::TextMessage, &m).await
     }
 
+    /// Non-blocking variant for audio callbacks. Returns false if the queue is full or closed
+    /// (the packet is dropped, which is the right thing for real-time voice).
+    pub fn try_send_voice(&self, packet: Vec<u8>) -> bool {
+        self.tx.try_send((MessageType::UdpTunnel as u16, packet)).is_ok()
+    }
+
     /// Send an already framed voice packet through the TCP tunnel.
     pub async fn send_voice(&self, packet: Vec<u8>) -> Result<(), Error> {
         self.tx.send((MessageType::UdpTunnel as u16, packet)).await.map_err(|_| Error::Closed)
@@ -226,6 +232,8 @@ async fn writer<W: AsyncWrite + Unpin>(mut wr: WriteHalf<W>, mut rx: mpsc::Recei
             }
         }
     }
+    // Dropping all `Client` handles ends up here: close the TLS session so the reader sees EOF.
+    let _ = tokio::io::AsyncWriteExt::shutdown(&mut wr).await;
 }
 
 async fn reader<R: AsyncRead + Unpin>(mut rd: ReadHalf<R>, state: Arc<RwLock<ServerState>>, ev: mpsc::Sender<Event>) {

@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use funk_core::voice::{FRAME_SAMPLES, Mixer, Transmitter, decode_packet};
 use funk_core::{Config, Event, connect};
 
-const USAGE: &str = "usage: funk-probe <host> <user> [--port N] [--password P] [--pin HEX64] \
+const USAGE: &str = "usage: funk-probe <host> <user> [--port N] [--password P | env FUNK_PASSWORD] [--pin HEX64] \
 [--channel ID] [--tone SECS] [--listen SECS]\n\
   --tone SECS    after joining, transmit a 440 Hz test tone for SECS seconds (PTT down/up)\n\
   --listen SECS  stay connected for SECS seconds and print voice/plugin events (default 5)";
@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
         eprintln!("{USAGE}");
         std::process::exit(2);
     };
-    let (mut port, mut password, mut pin, mut channel, mut tone, mut listen) = (64738u16, None, None, None, None::<u64>, 5u64);
+    let (mut port, mut password, mut pin, mut channel, mut tone, mut listen) = (64738u16, std::env::var("FUNK_PASSWORD").ok(), None, None, None::<u64>, 5u64);
     while let Some(a) = args.next() {
         let mut val = || args.next().with_context(|| format!("{a} needs a value"));
         match a.as_str() {

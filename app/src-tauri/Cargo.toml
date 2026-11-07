@@ -1,0 +1,21 @@
+[package]
+name = "funk-app"
+version = "0.1.0"
+edition = "2024"
+description = "Mumble-Funk walkie-talkie client"
+
+[lib]
+name = "funk_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+funk-core = { path = "../../crates/funk-core" }
+funk-audio = { path = "../../crates/funk-audio" }
+tracing = "0.1"

@@ -1,0 +1,10 @@
+[package]
+name = "funk-audio"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cpal = "0.18.2"
+funk-core = { version = "0.1.0", path = "../funk-core" }
+thiserror = "2.0.21"
+tracing = "0.1.44"

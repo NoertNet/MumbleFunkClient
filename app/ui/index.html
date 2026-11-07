@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Mumble Funk</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="connect" class="screen">
+    <h1>Mumble&nbsp;Funk</h1>
+    <form id="connect-form" autocomplete="off">
+      <label>Server <input id="host" required placeholder="funk.example.org" autocapitalize="off" spellcheck="false"></label>
+      <label>Port <input id="port" type="number" min="1" max="65535" value="64738" required></label>
+      <label>Rufzeichen / Name <input id="username" required autocapitalize="off" spellcheck="false"></label>
+      <label>Passwort <input id="password" type="password" placeholder="optional"></label>
+      <button id="connect-btn" type="submit">Verbinden</button>
+      <p id="error" role="alert" hidden></p>
+      <div id="pin-box" hidden>
+        <p>Das Zertifikat des Servers hat sich geändert. Das kann ein Serverumzug sein – oder ein Angriff.</p>
+        <button id="trust-btn" type="button" class="danger">Neuem Zertifikat vertrauen</button>
+      </div>
+    </form>
+  </main>
+
+  <main id="radio" class="screen" hidden>
+    <header>
+      <div><strong id="server-name"></strong><small id="welcome"></small></div>
+      <button id="disconnect-btn" type="button" class="ghost">Trennen</button>
+    </header>
+
+    <section id="status" aria-live="polite">Kanal frei</section>
+
+    <button id="ptt" type="button" aria-label="Push to talk">
+      <span id="ptt-label">SPRECHEN</span>
+    </button>
+    <p class="hint">Gedrückt halten oder Leertaste</p>
+
+    <section>
+      <h2>Kanäle</h2>
+      <ul id="channels"></ul>
+    </section>
+    <section>
+      <h2>Im Kanal</h2>
+      <ul id="users"></ul>
+    </section>
+  </main>
+  <script src="main.js"></script>
+</body>
+</html>
