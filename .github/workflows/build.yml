@@ -6,48 +6,47 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A newer push makes older runs on the same branch pointless.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, windows-latest]
-    runs-on: ${{ matrix.os }}
+  # Fast feedback: core logic and audio helpers (no GUI, so no Tauri/WebKit compile).
+  test:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libasound2-dev libssl-dev \
-            libayatana-appindicator3-dev librsvg2-dev libxdo-dev cmake
-      - name: Tests (core, audio, probe)
-        run: cargo test --workspace
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev cmake
+      - run: cargo test --workspace --exclude funk-app
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Prebuilt CLI from npm instead of compiling cargo-tauri (~7 min).
+      - run: npm install -g @tauri-apps/cli@^2
       - name: Build funk-probe
         run: cargo build --release -p funk-probe
       - uses: actions/upload-artifact@v4
         with:
-          name: funk-probe-${{ runner.os }}
-          path: |
-            target/release/funk-probe
-            target/release/funk-probe.exe
+          name: funk-probe-Windows
+          path: target/release/funk-probe.exe
           if-no-files-found: error
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2" --locked
       - name: Build app
         working-directory: app/src-tauri
-        run: cargo tauri build
+        run: tauri build
       - uses: actions/upload-artifact@v4
         with:
-          name: mumble-funk-${{ runner.os }}
+          name: mumble-funk-Windows
           path: |
-            target/release/bundle/**/*.deb
-            target/release/bundle/**/*.AppImage
             target/release/bundle/**/*.msi
             target/release/bundle/**/*-setup.exe
-          if-no-files-found: warn
+          if-no-files-found: error
 
   android:
     runs-on: ubuntu-24.04
@@ -55,29 +54,26 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi
+          targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2" --locked
+      - run: npm install -g @tauri-apps/cli@^2
       - name: Locate NDK
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "NDK_HOME=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
-          echo "ANDROID_HOME=$ANDROID_HOME NDK=$ANDROID_NDK_HOME"
-          ls "$ANDROID_HOME/ndk" || true
       - name: Init Android project
         working-directory: app/src-tauri
-        run: cargo tauri android init --ci
+        run: tauri android init --ci
       - name: Apply Funk Android patches
         if: hashFiles('app/android-patch.py') != ''
         run: python3 app/android-patch.py
       - name: Build debug APK
         working-directory: app/src-tauri
-        run: cargo tauri android build --apk --debug --target aarch64 --ci
+        run: tauri android build --apk --debug --target aarch64 --ci
       - uses: actions/upload-artifact@v4
         with:
           name: mumble-funk-android-debug
