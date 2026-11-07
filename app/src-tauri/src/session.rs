@@ -12,6 +12,9 @@ use tauri::{AppHandle, Emitter};
 
 use crate::ConnectArgs;
 use crate::settings::{self, Profile, hex, parse_pin};
+use crate::status::{StatusInput, status_line};
+use crate::android;
+use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 #[derive(Serialize, Clone)]
 pub struct UserDto {
@@ -48,6 +51,7 @@ pub struct Session {
     shared: Arc<Shared>,
     _audio_stop: mpsc::Sender<()>,
     pump: tauri::async_runtime::JoinHandle<()>,
+    status_tx: UnboundedSender<StatusInput>,
 }
 
 fn dto_of(client: &Client) -> StateDto {
@@ -72,6 +76,16 @@ impl Session {
         let mut stored = settings::load(&app);
         let pin = if args.trust_new_cert { None } else { stored.pins.get(&key).and_then(|h| parse_pin(h)) };
 
+        // Remember the server before connecting, so a failed attempt (wrong network, permission
+        // missing, ...) never forces the user to type everything again.
+        stored.remember(Profile {
+            host: args.host.clone(),
+            port: args.port,
+            username: args.username.clone(),
+            password: if args.remember_password { args.password.clone().filter(|p| !p.is_empty()) } else { None },
+        });
+        settings::save(&app, &stored);
+
         let cfg = Config {
             host: args.host.clone(),
             port: args.port,
@@ -92,20 +106,15 @@ impl Session {
             e => e.to_string(),
         })?;
 
-        // Remember the server as soon as the login worked, even if audio fails afterwards.
+        // Certificate pin: trust on first use, replace only when the user accepted a new one.
         stored.pins.entry(key.clone()).and_modify(|p| {
             if args.trust_new_cert {
                 *p = hex(&client.cert_sha256());
             }
         }).or_insert_with(|| hex(&client.cert_sha256()));
-        stored.remember(Profile {
-            host: args.host.clone(),
-            port: args.port,
-            username: args.username.clone(),
-            password: if args.remember_password { args.password.clone().filter(|p| !p.is_empty()) } else { None },
-        });
         settings::save(&app, &stored);
 
+        let (status_tx, mut status_rx) = unbounded_channel::<StatusInput>();
         let shared = Arc::new(Shared { tx: Mutex::new(Transmitter::new().map_err(|e| e.to_string())?), mixer: Mutex::new(Mixer::new()) });
 
         // Audio streams live on their own thread (cpal streams are not Send on every platform).
@@ -115,6 +124,7 @@ impl Session {
             let shared = shared.clone();
             let c = client.clone();
             let a = app.clone();
+            let st = status_tx.clone();
             std::thread::spawn(move || {
                 let started = Audio::start(
                     shared,
@@ -122,7 +132,9 @@ impl Session {
                         c.try_send_voice(p);
                     }),
                     Arc::new(move |info| {
-                        let _ = a.emit("speaking", info.speaking);
+                        let _ = a.emit("speaking", info.speaking.clone());
+                        // Unbounded + non-blocking: this runs on the real-time audio thread.
+                        let _ = st.send(StatusInput::Speaking(info.speaking));
                     }),
                 );
                 match started {
@@ -144,41 +156,65 @@ impl Session {
         let pump = {
             let (app, shared, client) = (app.clone(), shared.clone(), client.clone());
             tauri::async_runtime::spawn(async move {
-                while let Some(ev) = events.recv().await {
-                    match ev {
-                        Event::Connected { .. } => {}
-                        Event::ChannelUpdated(_) | Event::UserUpdated(_) | Event::UserRemoved(_) => {
-                            let _ = app.emit("state", dto_of(&client));
+                let (mut speaking, mut tx_on, mut last_status) = (Vec::<u32>::new(), false, String::new());
+                // Updates the Android notification (no-op elsewhere); only calls out when text changed.
+                let mut refresh = |client: &Client, speaking: &[u32], tx_on: bool| {
+                    let line = status_line(&client.state(), speaking, tx_on);
+                    if line != last_status {
+                        android::update(&line, true);
+                        last_status = line;
+                    }
+                };
+                refresh(&client, &speaking, tx_on);
+                loop {
+                    tokio::select! {
+                        Some(input) = status_rx.recv() => {
+                            match input {
+                                StatusInput::Speaking(s) => speaking = s,
+                                StatusInput::Tx(t) => tx_on = t,
+                            }
+                            refresh(&client, &speaking, tx_on);
                         }
-                        Event::Voice(b) => {
-                            if let Some(p) = decode_packet(&b) {
-                                if let Ok(mut m) = shared.mixer.lock() {
-                                    let _ = m.push(p);
+                        ev = events.recv() => {
+                            let Some(ev) = ev else { break };
+                            match ev {
+                                Event::Connected { .. } => {}
+                                Event::ChannelUpdated(_) | Event::UserUpdated(_) | Event::UserRemoved(_) => {
+                                    let _ = app.emit("state", dto_of(&client));
+                                    refresh(&client, &speaking, tx_on);
+                                }
+                                Event::Voice(b) => {
+                                    if let Some(p) = decode_packet(&b) {
+                                        if let Ok(mut m) = shared.mixer.lock() {
+                                            let _ = m.push(p);
+                                        }
+                                    }
+                                }
+                                Event::PluginData { sender, data_id, data } => {
+                                    let _ = app.emit(
+                                        "plugin",
+                                        serde_json::json!({ "sender": sender, "dataId": data_id, "data": String::from_utf8_lossy(&data) }),
+                                    );
+                                }
+                                Event::Text { actor, text } => {
+                                    let _ = app.emit("text", serde_json::json!({ "actor": actor, "text": text }));
+                                }
+                                Event::PermissionDenied(r) => {
+                                    let _ = app.emit("notice", r);
+                                }
+                                Event::Disconnected(reason) => {
+                                    let _ = app.emit("disconnected", reason);
+                                    break;
                                 }
                             }
                         }
-                        Event::PluginData { sender, data_id, data } => {
-                            let _ = app.emit(
-                                "plugin",
-                                serde_json::json!({ "sender": sender, "dataId": data_id, "data": String::from_utf8_lossy(&data) }),
-                            );
-                        }
-                        Event::Text { actor, text } => {
-                            let _ = app.emit("text", serde_json::json!({ "actor": actor, "text": text }));
-                        }
-                        Event::PermissionDenied(r) => {
-                            let _ = app.emit("notice", r);
-                        }
-                        Event::Disconnected(reason) => {
-                            let _ = app.emit("disconnected", reason);
-                            break;
-                        }
                     }
                 }
+                android::update("", false);
             })
         };
 
-        Ok(Session { client, shared, _audio_stop: stop_tx, pump })
+        Ok(Session { client, shared, _audio_stop: stop_tx, pump, status_tx })
     }
 
     pub fn client(&self) -> Client {
@@ -190,6 +226,7 @@ impl Session {
     }
 
     pub fn ptt(&self, down: bool) {
+        let _ = self.status_tx.send(StatusInput::Tx(down));
         let mut tx = self.shared.tx.lock().unwrap();
         if down {
             if !tx.is_active() {
@@ -205,5 +242,6 @@ impl Session {
         // Release PTT cleanly, then dropping `self` stops audio and closes the connection.
         self.ptt(false);
         self.pump.abort();
+        android::update("", false);
     }
 }

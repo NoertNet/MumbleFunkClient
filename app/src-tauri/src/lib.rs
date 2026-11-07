@@ -1,7 +1,9 @@
 //! Tauri shell: wires `funk-core` (protocol, voice) and `funk-audio` (devices) to the UI.
 
+mod android;
 mod session;
 mod settings;
+mod status;
 
 use std::sync::Mutex;
 

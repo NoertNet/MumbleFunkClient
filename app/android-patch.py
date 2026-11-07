@@ -4,22 +4,35 @@
 The generated project (app/src-tauri/gen/android) is not committed, so CI re-creates it on every
 build and runs this script afterwards. It is idempotent and fails loudly if the template changes.
 
-Currently: microphone permission and Android 17 "local network" permission (manifest + runtime
-request). Without ACCESS_LOCAL_NETWORK an app targeting SDK 37 cannot open TCP connections to
-servers on the home network; they just time out.
+- microphone, notification and Android 17 "local network" permissions (manifest + runtime request).
+  Without ACCESS_LOCAL_NETWORK an app targeting SDK 37 cannot open TCP connections to servers on
+  the home network; they just time out.
+- a foreground service (FunkService) that keeps the process alive and shows a status notification
+  that opens the app; Rust updates its text through FunkBridge (see src/android.rs).
 """
 import pathlib
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent / "src-tauri" / "gen" / "android" / "app" / "src" / "main"
 MANIFEST = ROOT / "AndroidManifest.xml"
-ACTIVITY = ROOT / "java" / "net" / "noert" / "mumblefunk" / "MainActivity.kt"
+KOTLIN_DIR = ROOT / "java" / "net" / "noert" / "mumblefunk"
+ACTIVITY = KOTLIN_DIR / "MainActivity.kt"
 
 PERMISSIONS = [
     "android.permission.RECORD_AUDIO",
     "android.permission.MODIFY_AUDIO_SETTINGS",
     "android.permission.ACCESS_LOCAL_NETWORK",
+    "android.permission.POST_NOTIFICATIONS",
+    "android.permission.WAKE_LOCK",
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+    "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
 ]
+
+SERVICE_XML = (
+    '<service android:name=".FunkService" android:exported="false" '
+    'android:foregroundServiceType="microphone|mediaPlayback" />'
+)
 
 ACTIVITY_KT = """package net.noert.mumblefunk
 
@@ -40,6 +53,8 @@ class MainActivity : TauriActivity() {
     val wanted = mutableListOf(Manifest.permission.RECORD_AUDIO)
     // Android 17+: reaching servers on the local network needs its own runtime permission.
     if (Build.VERSION.SDK_INT >= 37) wanted.add("android.permission.ACCESS_LOCAL_NETWORK")
+    // Android 13+: without this the status notification (and so the foreground service UI) is hidden.
+    if (Build.VERSION.SDK_INT >= 33) wanted.add("android.permission.POST_NOTIFICATIONS")
     return wanted
       .filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
       .toTypedArray()
@@ -51,6 +66,148 @@ class MainActivity : TauriActivity() {
     val missing = missingPermissions()
     if (missing.isNotEmpty()) permissions.launch(missing)
   }
+}
+"""
+
+
+FUNK_BRIDGE_KT = """package net.noert.mumblefunk
+
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.util.Log
+
+/** Called from Rust (JNI, see src/android.rs). Starts, updates or stops the status service. */
+object FunkBridge {
+  @JvmStatic
+  fun update(ctx: Context, text: String, connected: Boolean) {
+    val app = ctx.applicationContext
+    if (!connected) {
+      app.stopService(Intent(app, FunkService::class.java))
+      return
+    }
+    FunkService.status = text
+    try {
+      if (FunkService.running) {
+        FunkService.refresh(app)
+      } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        app.startForegroundService(Intent(app, FunkService::class.java))
+      } else {
+        app.startService(Intent(app, FunkService::class.java))
+      }
+    } catch (e: Exception) {
+      Log.w("FunkBridge", "cannot start status service", e)
+    }
+  }
+}
+"""
+
+FUNK_SERVICE_KT = """package net.noert.mumblefunk
+
+import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
+import android.os.Build
+import android.os.IBinder
+import android.os.PowerManager
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
+
+/**
+ * Foreground service: keeps the app process (and with it the Rust connection and audio) alive while
+ * the screen is off and shows one status line. Tapping the notification opens the app.
+ */
+class FunkService : Service() {
+  private var wakeLock: PowerManager.WakeLock? = null
+  private var wifiLock: WifiManager.WifiLock? = null
+
+  companion object {
+    @Volatile var status: String = ""
+    @Volatile var running: Boolean = false
+    private const val CHANNEL_ID = "funk_status"
+    private const val NOTIFICATION_ID = 1
+
+    fun build(ctx: Context): Notification {
+      val launch = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName) ?: Intent()
+      val pending = PendingIntent.getActivity(
+        ctx, 0, launch, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+      )
+      return NotificationCompat.Builder(ctx, CHANNEL_ID)
+        .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+        .setContentTitle("Mumble Funk")
+        .setContentText(status)
+        .setContentIntent(pending)
+        .setOngoing(true)
+        .setOnlyAlertOnce(true)
+        .setCategory(NotificationCompat.CATEGORY_SERVICE)
+        .setPriority(NotificationCompat.PRIORITY_LOW)
+        .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+        .build()
+    }
+
+    fun refresh(ctx: Context) {
+      ctx.getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, build(ctx))
+    }
+  }
+
+  override fun onCreate() {
+    super.onCreate()
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      val channel = NotificationChannel(CHANNEL_ID, "Funk-Status", NotificationManager.IMPORTANCE_LOW)
+      channel.description = "Zeigt, dass Mumble Funk verbunden ist"
+      getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+    }
+  }
+
+  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+    if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+      types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+    }
+    ServiceCompat.startForeground(this, NOTIFICATION_ID, build(this), types)
+    running = true
+    acquireLocks()
+    return START_NOT_STICKY
+  }
+
+  private fun acquireLocks() {
+    if (wakeLock == null) {
+      val pm = getSystemService(PowerManager::class.java)
+      wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MumbleFunk:radio").apply {
+        setReferenceCounted(false)
+        acquire()
+      }
+    }
+    if (wifiLock == null) {
+      val wm = applicationContext.getSystemService(WifiManager::class.java)
+      val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+        WifiManager.WIFI_MODE_FULL_LOW_LATENCY else @Suppress("DEPRECATION") WifiManager.WIFI_MODE_FULL_HIGH_PERF
+      wifiLock = wm.createWifiLock(mode, "MumbleFunk:wifi").apply {
+        setReferenceCounted(false)
+        acquire()
+      }
+    }
+  }
+
+  override fun onDestroy() {
+    running = false
+    wakeLock?.let { if (it.isHeld) it.release() }
+    wifiLock?.let { if (it.isHeld) it.release() }
+    wakeLock = null
+    wifiLock = null
+    super.onDestroy()
+  }
+
+  override fun onBind(intent: Intent?): IBinder? = null
 }
 """
 
@@ -69,6 +226,11 @@ def patch_manifest() -> None:
         line = f'<uses-permission android:name="{perm}" />'
         if line not in text:
             text = text.replace(anchor, f"{anchor}\n    {line}", 1)
+    if "FunkService" not in text:
+        provider = "<provider"
+        if provider not in text:
+            fail("<provider> anchor not found in AndroidManifest.xml (template changed?)")
+        text = text.replace(provider, f"{SERVICE_XML}\n\n        {provider}", 1)
     MANIFEST.write_text(text, encoding="utf-8")
 
 
@@ -76,6 +238,8 @@ def patch_activity() -> None:
     if not ACTIVITY.exists():
         fail(f"{ACTIVITY} not found")
     ACTIVITY.write_text(ACTIVITY_KT, encoding="utf-8")
+    (KOTLIN_DIR / "FunkBridge.kt").write_text(FUNK_BRIDGE_KT, encoding="utf-8")
+    (KOTLIN_DIR / "FunkService.kt").write_text(FUNK_SERVICE_KT, encoding="utf-8")
 
 
 for p in (MANIFEST, ACTIVITY):
