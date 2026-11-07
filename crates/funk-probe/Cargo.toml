@@ -1,0 +1,9 @@
+[package]
+name = "funk-probe"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+funk-core = { version = "0.1.0", path = "../funk-core" }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time", "signal"] }

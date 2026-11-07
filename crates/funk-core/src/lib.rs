@@ -3,6 +3,7 @@
 
 pub mod client;
 pub mod state;
+pub mod voice;
 pub mod wire;
 
 /// Generated protobuf types for the Mumble control and UDP protocols.
