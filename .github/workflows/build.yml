@@ -156,6 +156,7 @@ jobs:
           if [ -n "$SECRET_KS" ] && [ -n "$SECRET_PW" ]; then
             echo "$SECRET_KS" | base64 -d > "$dir/secret.p12"
             ks="$dir/secret.p12"; pw="$SECRET_PW"
+            echo "Signaturschluessel: aus den Repository-Secrets (dauerhaft)"
           else
             ks="$dir/funk.p12"
             if [ ! -f "$ks" ] || [ ! -f "$dir/password.txt" ]; then
@@ -164,7 +165,9 @@ jobs:
               rm -f "$ks"
               keytool -genkeypair -keystore "$ks" -storetype PKCS12 -alias funk -keyalg RSA -keysize 2048 \
                 -validity 36500 -storepass "$pw" -keypass "$pw" -dname "CN=Mumble Funk, O=NoertNet"
-              echo "Created a new signing key."
+              echo "Signaturschluessel: NEU erzeugt (im Cache abgelegt). Installierte App vorher einmal deinstallieren."
+            else
+              echo "Signaturschluessel: aus dem Cache (wird nach 7 Tagen ohne Nutzung geloescht; Secrets verhindern das)"
             fi
             pw=$(cat "$dir/password.txt")
           fi
