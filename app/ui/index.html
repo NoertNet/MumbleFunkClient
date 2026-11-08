@@ -88,6 +88,11 @@
         <div id="mode" class="lcd-mode">BEREIT</div>
         <div id="who" class="lcd-row small"><span id="who-text"></span></div>
         <ul id="users" class="lcd-users"></ul>
+        <!-- Equalizer: Spektrum der Sprache im Kanal (rot) bzw. des eigenen Mikrofons (grün) -->
+        <div class="eq" aria-hidden="true">
+          <div class="eq-head"><span>SPEKTRUM</span><span id="eq-devices" class="eq-devices"></span></div>
+          <div id="eq-bars" class="eq-bars"></div>
+        </div>
       </div>
 
       <div class="chan-keys">
@@ -101,12 +106,6 @@
         <span id="ptt-label">PTT</span>
         <small>gedrückt halten · Leertaste</small>
       </button>
-
-      <!-- Equalizer: zeigt das Spektrum der Sprache im Kanal (rot) bzw. des eigenen Mikrofons (grün) -->
-      <div class="eq" aria-hidden="true">
-        <div class="eq-head"><span>SPEKTRUM</span><span id="eq-devices" class="eq-devices"></span></div>
-        <div id="eq-bars" class="eq-bars"></div>
-      </div>
 
       <div class="foot">
         <span class="plate" id="version-plate-radio">MUMBLE·FUNK MF-1</span>

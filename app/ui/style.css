@@ -54,7 +54,7 @@ body { background: radial-gradient(120% 80% at 50% 0%, #1a1d17 0%, var(--bg) 60%
 .lamp.tx.on i  { background: var(--green); box-shadow: 0 0 10px var(--green-glow); }
 
 /* ---------- Display ---------- */
-.lcd { position: relative; overflow: hidden; padding: 12px 14px 12px; border-radius: 14px; font-family: var(--mono);
+.lcd { position: relative; overflow: hidden; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 300px; padding: 12px 14px 12px; border-radius: 14px; font-family: var(--mono);
   color: var(--lcd); text-shadow: 0 0 8px var(--lcd-glow);
   background: radial-gradient(120% 140% at 50% 0%, var(--lcd-bg-a), var(--lcd-bg-b));
   box-shadow: inset 0 0 26px #000, inset 0 0 0 2px #000, 0 0 0 3px var(--bezel), 0 1px 0 3px #4b5142;
@@ -67,7 +67,7 @@ body { background: radial-gradient(120% 80% at 50% 0%, #1a1d17 0%, var(--bg) 60%
 .lcd-big { margin: 6px 0 2px; font-size: clamp(1.7rem, 8.5vw, 2.3rem); font-weight: 700; letter-spacing: .06em;
   text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lcd-mode { margin: 2px 0 6px; font-size: 1.15rem; font-weight: 700; letter-spacing: .24em; }
-.lcd-users { list-style: none; margin: 8px 0 0; padding: 8px 0 0; max-height: 5.6em; overflow: auto;
+.lcd-users { flex: none; list-style: none; margin: 8px 0 0; padding: 8px 0 0; max-height: 4.4em; overflow: auto;
   border-top: 1px dashed color-mix(in srgb, var(--lcd) 40%, transparent);
   font-size: .85rem; letter-spacing: .06em; text-transform: uppercase; scrollbar-width: none; }
 .lcd-users li { display: flex; justify-content: space-between; padding: 1px 4px; }
@@ -118,14 +118,12 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .brand { font: .66rem var(--mono); letter-spacing: .18em; color: #6f7766; }
 
 /* ---------- Equalizer ---------- */
-.eq { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 120px; margin-top: 14px; padding: 8px 12px 10px;
-  border-radius: 14px; color: var(--lcd); font-family: var(--mono);
-  background: radial-gradient(120% 140% at 50% 0%, var(--lcd-bg-a), var(--lcd-bg-b));
-  box-shadow: inset 0 0 26px #000, inset 0 0 0 2px #000, 0 0 0 3px var(--bezel), 0 1px 0 3px #4b5142; transition: color .12s; }
+.eq { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 84px; margin-top: 10px; padding-top: 8px;
+  border-top: 1px dashed color-mix(in srgb, var(--lcd) 40%, transparent); }
 .eq-head { display: flex; justify-content: space-between; gap: 10px; font-size: .66rem; letter-spacing: .14em; opacity: .85; text-shadow: 0 0 8px var(--lcd-glow); }
 .eq-devices { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: uppercase; opacity: .8; }
 .eq-devices.warn { color: var(--amber); opacity: 1; }
-.eq-bars { flex: 1; display: flex; gap: 4px; margin-top: 8px; min-height: 70px; }
+.eq-bars { flex: 1; display: flex; gap: 4px; margin-top: 8px; min-height: 60px; }
 .eq-bars i { position: relative; flex: 1; }
 .eq-bars i::before, .eq-bars i::after { content: ""; position: absolute; inset: 0;
   background: repeating-linear-gradient(to top, var(--lcd) 0 5px, transparent 5px 8px); }
