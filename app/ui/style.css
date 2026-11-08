@@ -22,10 +22,11 @@ html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--te
 body { background: radial-gradient(120% 80% at 50% 0%, #1a1d17 0%, var(--bg) 60%); min-height: 100dvh; }
 [hidden] { display: none !important; }
 
-.screen { display: flex; justify-content: center; padding: calc(env(safe-area-inset-top) + 34px) 14px calc(env(safe-area-inset-bottom) + 18px); }
+.screen { display: flex; justify-content: center; align-items: flex-start; min-height: 100dvh; padding: calc(env(safe-area-inset-top) + 34px) 14px calc(env(safe-area-inset-bottom) + 18px); }
 
 /* ---------- Gehäuse ---------- */
-.device { position: relative; width: 100%; max-width: 420px; padding: 16px 16px 14px; border-radius: 34px;
+.device { position: relative; display: flex; flex-direction: column; width: 100%; max-width: 420px;
+  min-height: calc(100dvh - 52px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); padding: 16px 16px 14px; border-radius: 34px;
   background: linear-gradient(160deg, var(--housing-a), var(--housing-b));
   box-shadow: inset 0 1px 0 #454b3d, inset 0 -2px 0 #0008, 0 0 0 2px #0b0c0a, 0 24px 48px #000c; }
 .antenna { position: absolute; top: -30px; left: 44px; width: 24px; height: 34px; border-radius: 12px 12px 0 0;
@@ -107,8 +108,32 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 [data-mode="rx"] #ptt { border-color: var(--red); box-shadow: inset 0 2px 0 #4a5142, inset 0 -8px 16px #0009, 0 7px 0 #0a0b09, 0 0 24px var(--red-glow); }
 [data-mode="busy"] #ptt.down { color: var(--red); border-color: var(--red); box-shadow: inset 0 6px 18px #000c, 0 2px 0 #0a0b09, 0 0 30px var(--red-glow); }
 
+/* ---------- Signal im Display ---------- */
+.lcd-head { align-items: center; gap: 10px; }
+.lcd-head .server { flex: 1; text-align: center; min-width: 0; }
+.lcd-head #chan-idx { flex: none; }
+.lcd .signal { flex: none; color: inherit; }
+.lcd .bars i { background: color-mix(in srgb, var(--lcd) 22%, #0a0e0b); }
+.lcd .signal[data-level="0"] { color: inherit; opacity: .55; }
+.brand { font: .66rem var(--mono); letter-spacing: .18em; color: #6f7766; }
+
+/* ---------- Equalizer ---------- */
+.eq { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 120px; margin-top: 14px; padding: 8px 12px 10px;
+  border-radius: 14px; color: var(--lcd); font-family: var(--mono);
+  background: radial-gradient(120% 140% at 50% 0%, var(--lcd-bg-a), var(--lcd-bg-b));
+  box-shadow: inset 0 0 26px #000, inset 0 0 0 2px #000, 0 0 0 3px var(--bezel), 0 1px 0 3px #4b5142; transition: color .12s; }
+.eq-head { display: flex; justify-content: space-between; gap: 10px; font-size: .66rem; letter-spacing: .14em; opacity: .85; text-shadow: 0 0 8px var(--lcd-glow); }
+.eq-devices { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: uppercase; opacity: .8; }
+.eq-devices.warn { color: var(--amber); opacity: 1; }
+.eq-bars { flex: 1; display: flex; gap: 4px; margin-top: 8px; min-height: 70px; }
+.eq-bars i { position: relative; flex: 1; }
+.eq-bars i::before, .eq-bars i::after { content: ""; position: absolute; inset: 0;
+  background: repeating-linear-gradient(to top, var(--lcd) 0 5px, transparent 5px 8px); }
+.eq-bars i::before { opacity: .13; }
+.eq-bars i::after { clip-path: inset(var(--cut, 100%) 0 0 0); filter: drop-shadow(0 0 4px var(--lcd-glow)); }
+
 /* ---------- Unterkante ---------- */
-.grille { height: 26px; margin: 12px 14px 0; opacity: .8; border-radius: 6px;
+.grille { flex: none; height: 26px; margin: auto 14px 0; padding-top: 12px; box-sizing: content-box; opacity: .8; border-radius: 6px;
   background: repeating-linear-gradient(90deg, #0b0c0a 0 3px, transparent 3px 9px); }
 .foot .key { white-space: nowrap; }
 .foot { display: flex; justify-content: space-between; align-items: center; margin: 12px 4px 0; }
@@ -121,6 +146,14 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   text-transform: uppercase; box-shadow: 0 8px 24px #000c, 0 0 14px var(--amber-glow); }
 .update span { flex: 1; min-width: 0; }
 body.has-update .screen { padding-top: calc(env(safe-area-inset-top) + 92px); }
+
+/* ---------- Audio-Geräte ---------- */
+details { border-radius: 10px; background: #0b0d0a; box-shadow: inset 0 0 12px #000; padding: 4px 12px; }
+summary { cursor: pointer; padding: 8px 0; font: 700 .72rem var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--text); }
+details[open] { display: grid; gap: 10px; padding-bottom: 12px; }
+details[open] summary { padding-bottom: 0; }
+details select { width: 100%; }
+.hint { margin: 0; font: .7rem var(--mono); color: var(--muted); }
 
 /* ---------- Formular ---------- */
 form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 18px; }

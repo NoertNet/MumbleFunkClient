@@ -70,6 +70,14 @@ cargo tauri android dev     # Handy per USB, Debugging aktiv
 ```
 Die Android-Teile (Mikrofon-Berechtigung, Foreground-Service für Empfang bei ausgeschaltetem Display) sind noch nicht umgesetzt.
 
+## Audio-Geräte (Computer)
+
+Auf dem Einschalt-Bildschirm gibt es den Bereich „Audio-Geräte“ mit je einer Auswahl für Mikrofon und Lautsprecher
+(„Liste aktualisieren“ liest die Geräte neu ein, etwa nach dem Einstecken eines USB-Mikrofons). Die Wahl wird gespeichert und
+gilt ab der nächsten Verbindung; ohne Auswahl nutzt die App das Standardgerät. Ist das gewählte Gerät nicht erreichbar,
+weicht sie auf das Standardgerät aus und zeigt das im Equalizer-Feld an (Name der tatsächlich benutzten Geräte, bei Ausweichen
+in Bernstein). Auf Android bestimmt das System die Ausgabe, dort gibt es die Auswahl nicht.
+
 ## Bedienung
 
 Server, Port, Name (und Passwort) eintragen, verbinden. Erfolgreiche Server werden gespeichert und stehen beim nächsten Start unter „Gespeicherte Server“ bereit; das Passwort nur, wenn das Häkchen gesetzt ist. Kanal antippen zum Wechseln. Den großen Knopf gedrückt halten

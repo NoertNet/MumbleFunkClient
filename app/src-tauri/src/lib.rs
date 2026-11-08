@@ -28,13 +28,21 @@ struct ConnectArgs {
     trust_new_cert: bool,
 }
 
+/// Result of `connect`: the server state plus the audio devices that were opened.
+#[derive(serde::Serialize)]
+struct ConnectDto {
+    #[serde(flatten)]
+    state: StateDto,
+    audio: session::AudioDto,
+}
+
 #[tauri::command]
-async fn connect(app: AppHandle, state: State<'_, App>, args: ConnectArgs) -> Result<StateDto, String> {
+async fn connect(app: AppHandle, state: State<'_, App>, args: ConnectArgs) -> Result<ConnectDto, String> {
     if let Some(old) = state.session.lock().unwrap().take() {
         old.close();
     }
     let s = Session::connect(app, args).await?;
-    let dto = s.dto();
+    let dto = ConnectDto { state: s.dto(), audio: s.audio.clone() };
     *state.session.lock().unwrap() = Some(s);
     Ok(dto)
 }
@@ -64,6 +72,48 @@ fn ptt(state: State<'_, App>, down: bool) -> Result<(), String> {
 #[tauri::command]
 fn load_settings(app: AppHandle) -> settings::Settings {
     settings::load(&app)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioDevicesDto {
+    /// False on phones, where the system decides the routing.
+    supported: bool,
+    inputs: Vec<String>,
+    outputs: Vec<String>,
+    default_input: Option<String>,
+    default_output: Option<String>,
+    selected_input: Option<String>,
+    selected_output: Option<String>,
+}
+
+/// Lists the audio devices for the desktop settings and the current choice.
+#[tauri::command]
+async fn list_audio_devices(app: AppHandle) -> AudioDevicesDto {
+    let saved = settings::load(&app);
+    if cfg!(target_os = "android") {
+        return AudioDevicesDto { supported: false, inputs: vec![], outputs: vec![], default_input: None, default_output: None, selected_input: None, selected_output: None };
+    }
+    // Enumerating can take a moment on some drivers; keep it off the UI thread.
+    let list = tauri::async_runtime::spawn_blocking(funk_audio::list_devices).await.unwrap_or_default();
+    AudioDevicesDto {
+        supported: true,
+        inputs: list.inputs,
+        outputs: list.outputs,
+        default_input: list.default_input,
+        default_output: list.default_output,
+        selected_input: saved.input_device,
+        selected_output: saved.output_device,
+    }
+}
+
+/// Remembers the chosen devices; used from the next connection on. `None` = system default.
+#[tauri::command]
+fn set_audio_devices(app: AppHandle, input: Option<String>, output: Option<String>) {
+    let mut s = settings::load(&app);
+    s.input_device = input.filter(|n| !n.is_empty());
+    s.output_device = output.filter(|n| !n.is_empty());
+    settings::save(&app, &s);
 }
 
 #[tauri::command]
@@ -118,7 +168,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(App::default())
-        .invoke_handler(tauri::generate_handler![connect, disconnect, join_channel, ptt, load_settings, forget_profile, app_version, check_update, open_update_url])
+        .invoke_handler(tauri::generate_handler![connect, disconnect, join_channel, ptt, load_settings, forget_profile, list_audio_devices, set_audio_devices, app_version, check_update, open_update_url])
         .on_window_event(|w, ev| {
             if let tauri::WindowEvent::Destroyed = ev {
                 if let Some(s) = w.app_handle().state::<App>().session.lock().unwrap().take() {

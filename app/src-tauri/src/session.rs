@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc;
 
-use funk_audio::{Audio, Shared};
+use funk_audio::{Audio, DevicePrefs, Level, Shared};
 use funk_core::voice::{Mixer, Transmitter, decode_packet};
 use funk_core::{Client, Config, Error, Event};
 use serde::Serialize;
@@ -46,12 +46,28 @@ const ANDROID_HINT: &str =
 #[cfg(not(target_os = "android"))]
 const ANDROID_HINT: &str = "";
 
+/// Which devices the audio streams ended up on (and why a chosen one was skipped).
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioDto {
+    pub input: String,
+    pub output: String,
+    pub notes: Vec<String>,
+}
+
+#[derive(Serialize, Clone)]
+struct LevelDto {
+    tx: bool,
+    bands: Vec<u8>,
+}
+
 pub struct Session {
     client: Client,
     shared: Arc<Shared>,
     _audio_stop: mpsc::Sender<()>,
     pump: tauri::async_runtime::JoinHandle<()>,
     status_tx: UnboundedSender<StatusInput>,
+    pub audio: AudioDto,
 }
 
 fn dto_of(client: &Client) -> StateDto {
@@ -115,16 +131,24 @@ impl Session {
         settings::save(&app, &stored);
 
         let (status_tx, mut status_rx) = unbounded_channel::<StatusInput>();
+        let (levels_tx, mut levels_rx) = unbounded_channel::<Level>();
+        // Device choice only exists on the desktop; phones always use the system routing.
+        let prefs = if cfg!(target_os = "android") {
+            DevicePrefs::default()
+        } else {
+            DevicePrefs { input: stored.input_device.clone(), output: stored.output_device.clone() }
+        };
         let shared = Arc::new(Shared { tx: Mutex::new(Transmitter::new().map_err(|e| e.to_string())?), mixer: Mutex::new(Mixer::new()) });
 
         // Audio streams live on their own thread (cpal streams are not Send on every platform).
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
-        let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
+        let (ready_tx, ready_rx) = mpsc::channel::<Result<AudioDto, String>>();
         {
             let shared = shared.clone();
             let c = client.clone();
             let a = app.clone();
             let st = status_tx.clone();
+            let lt = levels_tx.clone();
             std::thread::spawn(move || {
                 let started = Audio::start(
                     shared,
@@ -136,10 +160,18 @@ impl Session {
                         // Unbounded + non-blocking: this runs on the real-time audio thread.
                         let _ = st.send(StatusInput::Speaking(info.speaking));
                     }),
+                    Arc::new(move |level| {
+                        let _ = lt.send(level);
+                    }),
+                    prefs,
                 );
                 match started {
                     Ok(audio) => {
-                        let _ = ready_tx.send(Ok(()));
+                        let _ = ready_tx.send(Ok(AudioDto {
+                            input: audio.input_name.clone(),
+                            output: audio.output_name.clone(),
+                            notes: audio.notes.clone(),
+                        }));
                         let _ = stop_rx.recv(); // returns when the Session is dropped
                         drop(audio);
                     }
@@ -149,9 +181,19 @@ impl Session {
                 }
             });
         }
-        tauri::async_runtime::spawn_blocking(move || ready_rx.recv().unwrap_or_else(|_| Err("audio thread died".into())))
+        let audio_dto = tauri::async_runtime::spawn_blocking(move || ready_rx.recv().unwrap_or_else(|_| Err("audio thread died".into())))
             .await
             .map_err(|e| e.to_string())??;
+
+        // Spectrum for the equalizer: the audio threads only push into the channel (no IPC there).
+        {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                while let Some(l) = levels_rx.recv().await {
+                    let _ = app.emit("levels", LevelDto { tx: l.tx, bands: l.bands.to_vec() });
+                }
+            });
+        }
 
         let pump = {
             let (app, shared, client) = (app.clone(), shared.clone(), client.clone());
@@ -217,7 +259,7 @@ impl Session {
             })
         };
 
-        Ok(Session { client, shared, _audio_stop: stop_tx, pump, status_tx })
+        Ok(Session { client, shared, _audio_stop: stop_tx, pump, status_tx, audio: audio_dto })
     }
 
     pub fn client(&self) -> Client {

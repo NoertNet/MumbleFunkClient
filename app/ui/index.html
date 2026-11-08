@@ -39,6 +39,13 @@
         <label>Rufzeichen <input id="username" required autocapitalize="off" spellcheck="false"></label>
         <label>Passwort <input id="password" type="password" placeholder="optional"></label>
         <label class="check"><input id="remember" type="checkbox" checked> Passwort speichern <small>(unverschlüsselt)</small></label>
+        <details id="audio-box" hidden>
+          <summary>Audio-Geräte</summary>
+          <label>Mikrofon <select id="in-dev"></select></label>
+          <label>Lautsprecher <select id="out-dev"></select></label>
+          <button id="dev-refresh" type="button" class="key small">Liste aktualisieren</button>
+          <p class="hint">Gilt ab der nächsten Verbindung. Ohne Auswahl wird das Standardgerät des Systems benutzt.</p>
+        </details>
         <button id="connect-btn" type="submit" class="key power">Einschalten</button>
         <p id="error" role="alert" hidden></p>
         <div id="pin-box" hidden>
@@ -60,10 +67,7 @@
       <div class="antenna" aria-hidden="true"></div>
 
       <div class="topbar">
-        <div id="signal" class="signal" role="img" aria-label="Verbindung: unbekannt">
-          <span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-          <span id="ms" class="ms">— ms</span>
-        </div>
+        <span class="brand">MF-1 · SIMPLEX</span>
         <div class="lamps" aria-hidden="true">
           <span class="lamp net" id="lamp-net"><i></i>NET</span>
           <span class="lamp rx" id="lamp-rx"><i></i>RX</span>
@@ -72,7 +76,14 @@
       </div>
 
       <div class="lcd" aria-live="polite">
-        <div class="lcd-row small"><span id="server-name"></span><span id="chan-idx">KANAL</span></div>
+        <div class="lcd-row small lcd-head">
+          <div id="signal" class="signal" role="img" aria-label="Verbindung: unbekannt">
+            <span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+            <span id="ms" class="ms">— ms</span>
+          </div>
+          <span id="server-name" class="server"></span>
+          <span id="chan-idx">KANAL</span>
+        </div>
         <div id="chan-name" class="lcd-big">—</div>
         <div id="mode" class="lcd-mode">BEREIT</div>
         <div id="who" class="lcd-row small"><span id="who-text"></span></div>
@@ -91,7 +102,12 @@
         <small>gedrückt halten · Leertaste</small>
       </button>
 
-      <div class="grille" aria-hidden="true"></div>
+      <!-- Equalizer: zeigt das Spektrum der Sprache im Kanal (rot) bzw. des eigenen Mikrofons (grün) -->
+      <div class="eq" aria-hidden="true">
+        <div class="eq-head"><span>SPEKTRUM</span><span id="eq-devices" class="eq-devices"></span></div>
+        <div id="eq-bars" class="eq-bars"></div>
+      </div>
+
       <div class="foot">
         <span class="plate" id="version-plate-radio">MUMBLE·FUNK MF-1</span>
         <button id="disconnect-btn" type="button" class="key small">AUS</button>

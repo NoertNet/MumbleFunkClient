@@ -31,6 +31,9 @@ pub struct Settings {
     pub profiles: Vec<Profile>,
     /// `Profile::key()` of the most recently used profile.
     pub last: Option<String>,
+    /// Audio devices chosen on the desktop (by name); `None` = system default.
+    pub input_device: Option<String>,
+    pub output_device: Option<String>,
     /// Trust-on-first-use certificate fingerprints, key `host:port`, value hex SHA-256.
     pub pins: HashMap<String, String>,
 }

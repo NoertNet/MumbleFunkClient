@@ -6,7 +6,11 @@
 //! mono and resampled to 48 kHz; playback is resampled from 48 kHz and copied to
 //! all device channels.
 
+mod meter;
 mod resample;
+
+pub use meter::BANDS;
+use meter::Meter;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -41,10 +45,58 @@ pub type PacketSink = Arc<dyn Fn(Vec<u8>) + Send + Sync + 'static>;
 /// Called from the playback callback whenever the set of speakers changes.
 pub type SpeakerSink = Arc<dyn Fn(MixInfo) + Send + Sync + 'static>;
 
+/// Spectrum of what is currently heard (`tx == false`) or spoken (`tx == true`), ~25 times a second
+/// while there is sound. Called from the audio threads, so it must not block.
+pub struct Level {
+    pub tx: bool,
+    pub bands: [u8; BANDS],
+}
+pub type LevelSink = Arc<dyn Fn(Level) + Send + Sync + 'static>;
+
+/// Minimum time between two level reports.
+const LEVEL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(40);
+
+/// Devices to use, by the name `list_devices` reports. `None` = system default.
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct DevicePrefs {
+    pub input: Option<String>,
+    pub output: Option<String>,
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct DeviceList {
+    pub inputs: Vec<String>,
+    pub outputs: Vec<String>,
+    pub default_input: Option<String>,
+    pub default_output: Option<String>,
+}
+
+/// Names of all input and output devices (for a settings dialog).
+pub fn list_devices() -> DeviceList {
+    let host = cpal::default_host();
+    let names = |kind| {
+        let mut v: Vec<String> = all_devices(&host, kind).iter().map(name_of).collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+    DeviceList {
+        inputs: names(Kind::Input),
+        outputs: names(Kind::Output),
+        default_input: default_device(&host, Kind::Input).as_ref().map(name_of),
+        default_output: default_device(&host, Kind::Output).as_ref().map(name_of),
+    }
+}
+
 /// Running audio streams. Dropping it stops capture and playback.
 pub struct Audio {
     _input: Stream,
     _output: Stream,
+    /// Devices actually in use (may differ from the preferred ones if those failed).
+    pub input_name: String,
+    pub output_name: String,
+    /// Why preferred/default devices were skipped on the way, if they were.
+    pub notes: Vec<String>,
 }
 
 fn rate(c: &StreamConfig) -> u32 {
@@ -121,17 +173,40 @@ fn name_of(d: &Device) -> String {
     d.name().unwrap_or_else(|_| "unknown device".into())
 }
 
-/// Open a stream on the system default device. Windows can need a moment (or a different
-/// endpoint) right after another stream was opened, e.g. when a Bluetooth headset switches
-/// to its hands-free profile as soon as the microphone starts. So: retry the default device
-/// with a fresh lookup each time, then fall back to every other device.
+/// Open a stream: first the device the user picked (if any), then the system default, then every
+/// other device. Windows can need a moment (or a different endpoint) right after another stream was
+/// opened, e.g. when a Bluetooth headset switches to its hands-free profile as soon as the
+/// microphone starts, so the default device is retried with a fresh lookup each time.
+/// Returns the stream plus the reasons earlier candidates were skipped.
 fn open_with_fallback(
     what: &'static str,
     kind: Kind,
+    preferred: Option<&str>,
     mut open: impl FnMut(&Device) -> Result<Stream, AudioError>,
-) -> Result<Stream, AudioError> {
+) -> Result<(Stream, Vec<String>), AudioError> {
     let host = cpal::default_host();
     let mut tried: Vec<String> = Vec::new();
+
+    if let Some(want) = preferred {
+        match all_devices(&host, kind).into_iter().find(|d| name_of(d) == want) {
+            Some(dev) => {
+                for attempt in 0..2 {
+                    match open(&dev) {
+                        Ok(s) => return Ok((s, tried)),
+                        Err(e) => {
+                            tracing::warn!("{what} '{want}' attempt {}: {e}", attempt + 1);
+                            if attempt == 0 {
+                                tried.push(format!("'{want}' (gewählt): {e}"));
+                                std::thread::sleep(std::time::Duration::from_millis(300));
+                            }
+                        }
+                    }
+                }
+            }
+            None => tried.push(format!("'{want}' (gewählt): nicht gefunden")),
+        }
+    }
+
     let mut default_name = None;
     for attempt in 0..3 {
         let Some(dev) = default_device(&host, kind) else {
@@ -139,11 +214,11 @@ fn open_with_fallback(
         };
         let name = name_of(&dev);
         match open(&dev) {
-            Ok(s) => return Ok(s),
+            Ok(s) => return Ok((s, tried)),
             Err(e) => {
                 tracing::warn!("{what} '{name}' attempt {}: {e}", attempt + 1);
                 if attempt == 0 {
-                    tried.push(format!("'{name}' (default): {e}"));
+                    tried.push(format!("'{name}' (Standard): {e}"));
                 }
                 default_name = Some(name);
             }
@@ -154,13 +229,13 @@ fn open_with_fallback(
     }
     for dev in all_devices(&host, kind) {
         let name = name_of(&dev);
-        if Some(&name) == default_name.as_ref() {
+        if Some(&name) == default_name.as_ref() || Some(name.as_str()) == preferred {
             continue;
         }
         match open(&dev) {
             Ok(s) => {
                 tracing::warn!("{what}: default device failed, using '{name}'");
-                return Ok(s);
+                return Ok((s, tried));
             }
             Err(e) => tried.push(format!("'{name}': {e}")),
         }
@@ -168,7 +243,7 @@ fn open_with_fallback(
     Err(AudioError::AllFailed { what, tried: tried.join(" | ") })
 }
 
-fn start_input(dev: &Device, shared: &Arc<Shared>, on_packet: &PacketSink) -> Result<(Stream, StreamConfig, SampleFormat), AudioError> {
+fn start_input(dev: &Device, shared: &Arc<Shared>, on_packet: &PacketSink, on_levels: &LevelSink) -> Result<(Stream, StreamConfig, SampleFormat), AudioError> {
     // Device format -> mono -> 48 kHz -> i16 -> Opus.
     let conf = dev.default_input_config().map_err(|e| AudioError::Cpal {
         what: "audio input",
@@ -179,6 +254,9 @@ fn start_input(dev: &Device, shared: &Arc<Shared>, on_packet: &PacketSink) -> Re
     let fmt = conf.sample_format();
     let sh = shared.clone();
     let on_packet = on_packet.clone();
+    let on_levels = on_levels.clone();
+    let meter = Meter::new(SAMPLE_RATE);
+    let mut last_level = std::time::Instant::now();
     let mut rs = Resampler::new(rate(&cfg), SAMPLE_RATE);
     let (mut r48, mut pcm) = (Vec::<f32>::new(), Vec::<i16>::new());
     let on_mono = move |mono: &[f32]| {
@@ -191,6 +269,10 @@ fn start_input(dev: &Device, shared: &Arc<Shared>, on_packet: &PacketSink) -> Re
         rs.process(mono, &mut r48);
         pcm.clear();
         pcm.extend(r48.iter().map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i16));
+        if last_level.elapsed() >= LEVEL_INTERVAL {
+            last_level = std::time::Instant::now();
+            on_levels(Level { tx: true, bands: meter.analyze(&pcm) });
+        }
         if let Ok(packets) = tx.push_pcm(&pcm) {
             for p in packets {
                 on_packet(p);
@@ -208,7 +290,7 @@ fn start_input(dev: &Device, shared: &Arc<Shared>, on_packet: &PacketSink) -> Re
     Ok((stream, cfg, fmt))
 }
 
-fn start_output(dev: &Device, shared: &Arc<Shared>, on_speakers: &SpeakerSink) -> Result<(Stream, StreamConfig, SampleFormat), AudioError> {
+fn start_output(dev: &Device, shared: &Arc<Shared>, on_speakers: &SpeakerSink, on_levels: &LevelSink) -> Result<(Stream, StreamConfig, SampleFormat), AudioError> {
     // Mixer (48 kHz mono) -> device rate -> all channels.
     let conf = dev.default_output_config().map_err(|e| AudioError::Cpal {
         what: "audio output",
@@ -219,6 +301,9 @@ fn start_output(dev: &Device, shared: &Arc<Shared>, on_speakers: &SpeakerSink) -
     let fmt = conf.sample_format();
     let sh = shared.clone();
     let on_speakers = on_speakers.clone();
+    let on_levels = on_levels.clone();
+    let meter = Meter::new(SAMPLE_RATE);
+    let mut last_level = std::time::Instant::now();
     let mut rs = Resampler::new(SAMPLE_RATE, rate(&cfg));
     let mut ready: VecDeque<f32> = VecDeque::with_capacity(FRAME_SAMPLES * 2);
     let mut last_speaking: Vec<u32> = Vec::new();
@@ -233,9 +318,15 @@ fn start_output(dev: &Device, shared: &Arc<Shared>, on_speakers: &SpeakerSink) -
                     MixInfo::default()
                 }
             };
+            let heard = !info.speaking.is_empty();
             if info.speaking != last_speaking || !info.ended.is_empty() {
                 last_speaking = info.speaking.clone();
                 on_speakers(info);
+            }
+            // Only while there is something to show; the display decays on its own afterwards.
+            if heard && last_level.elapsed() >= LEVEL_INTERVAL {
+                last_level = std::time::Instant::now();
+                on_levels(Level { tx: false, bands: meter.analyze(&frame) });
             }
             src.clear();
             src.extend(frame.iter().map(|&s| s as f32 / 32768.0));
@@ -257,10 +348,16 @@ fn start_output(dev: &Device, shared: &Arc<Shared>, on_speakers: &SpeakerSink) -
 }
 
 impl Audio {
-    pub fn start(shared: Arc<Shared>, on_packet: PacketSink, on_speakers: SpeakerSink) -> Result<Self, AudioError> {
+    pub fn start(
+        shared: Arc<Shared>,
+        on_packet: PacketSink,
+        on_speakers: SpeakerSink,
+        on_levels: LevelSink,
+        prefs: DevicePrefs,
+    ) -> Result<Self, AudioError> {
         let mut in_info = None;
-        let input = open_with_fallback("audio input", Kind::Input, |d| {
-            let (s, c, f) = start_input(d, &shared, &on_packet)?;
+        let (input, mut notes) = open_with_fallback("audio input", Kind::Input, prefs.input.as_deref(), |d| {
+            let (s, c, f) = start_input(d, &shared, &on_packet, &on_levels)?;
             in_info = Some((name_of(d), rate(&c), c.channels, f));
             Ok(s)
         })?;
@@ -268,12 +365,19 @@ impl Audio {
         // profile), so give it a moment and look the output device up afresh.
         std::thread::sleep(std::time::Duration::from_millis(300));
         let mut out_info = None;
-        let output = open_with_fallback("audio output", Kind::Output, |d| {
-            let (s, c, f) = start_output(d, &shared, &on_speakers)?;
+        let (output, out_notes) = open_with_fallback("audio output", Kind::Output, prefs.output.as_deref(), |d| {
+            let (s, c, f) = start_output(d, &shared, &on_speakers, &on_levels)?;
             out_info = Some((name_of(d), rate(&c), c.channels, f));
             Ok(s)
         })?;
+        notes.extend(out_notes);
         tracing::info!("audio: input {in_info:?}, output {out_info:?}");
-        Ok(Self { _input: input, _output: output })
+        Ok(Self {
+            _input: input,
+            _output: output,
+            input_name: in_info.map(|i| i.0).unwrap_or_default(),
+            output_name: out_info.map(|o| o.0).unwrap_or_default(),
+            notes,
+        })
     }
 }

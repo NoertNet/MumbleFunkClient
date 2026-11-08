@@ -151,6 +151,8 @@ function resetRadio() {
   $('chan-list-btn').setAttribute('aria-expanded', 'false');
   $('radio').dataset.mode = 'idle';
   $('lamp-net').classList.remove('on');
+  eqTarget.fill(0);
+  $('eq-devices').textContent = '';
 }
 
 /* ---------- Verbinden ---------- */
@@ -177,6 +179,7 @@ async function doConnect(trustNewCert) {
   try {
     state = await invoke('connect', { args });
     username = args.username;
+    setEqDevices(state.audio);
     $('server-name').textContent = args.host;
     latencyMs = null;
     render();
@@ -190,6 +193,104 @@ async function doConnect(trustNewCert) {
     $('idle-msg').hidden = false;
   }
 }
+
+/* ---------- Equalizer ---------- */
+
+const EQ_BANDS = 16;
+const eqEls = [];
+const eqCur = new Float32Array(EQ_BANDS);
+const eqTarget = new Float32Array(EQ_BANDS);
+const eqShown = new Int16Array(EQ_BANDS).fill(-1);
+let eqLastEvent = 0;
+let eqRunning = false;
+
+function buildEq() {
+  for (let i = 0; i < EQ_BANDS; i++) {
+    const el = document.createElement('i');
+    $('eq-bars').append(el);
+    eqEls.push(el);
+  }
+}
+
+// Messwerte kommen nur, solange Ton da ist (ca. 25 pro Sekunde); dazwischen und danach klingt die
+// Anzeige selbst ab. Die Animation läuft nur, solange noch etwas leuchtet (spart Akku im Leerlauf).
+function onLevels(p) {
+  eqLastEvent = performance.now();
+  for (let i = 0; i < EQ_BANDS; i++) eqTarget[i] = Math.min(1, (p.bands[i] || 0) / 255);
+  if (!eqRunning) { eqRunning = true; requestAnimationFrame(eqFrame); }
+}
+
+function eqFrame(now) {
+  const silent = now - eqLastEvent > 150;
+  let active = false;
+  for (let i = 0; i < EQ_BANDS; i++) {
+    if (silent) eqTarget[i] = 0;
+    const t = eqTarget[i];
+    const c = eqCur[i];
+    // schnell hoch, langsamer runter: wie bei einem echten Analyser
+    let next = t > c ? c + (t - c) * 0.65 : c + (t - c) * 0.16;
+    if (t === 0 && next < 0.015) next = 0;
+    eqCur[i] = next;
+    if (next > 0 || t > 0) active = true;
+    const pct = Math.round(next * 100);
+    if (pct !== eqShown[i]) {
+      eqShown[i] = pct;
+      eqEls[i].style.setProperty('--cut', `${100 - pct}%`);
+    }
+  }
+  if (active) requestAnimationFrame(eqFrame); else eqRunning = false;
+}
+
+function setEqDevices(audio) {
+  const el = $('eq-devices');
+  if (!audio || (!audio.input && !audio.output)) { el.textContent = ''; return; }
+  el.textContent = `MIC ${audio.input || '–'} · LS ${audio.output || '–'}`;
+  const warn = (audio.notes || []).length > 0;
+  el.classList.toggle('warn', warn);
+  el.title = warn ? `Hinweis: ${audio.notes.join('; ')}` : '';
+}
+
+/* ---------- Audio-Geräte (nur Computer) ---------- */
+
+function fillSelect(sel, names, def, chosen) {
+  const first = document.createElement('option');
+  first.value = '';
+  first.textContent = def ? `Standard (${def})` : 'Standard';
+  const opts = [first, ...names.map((n) => {
+    const o = document.createElement('option');
+    o.value = n;
+    o.textContent = n;
+    return o;
+  })];
+  if (chosen && !names.includes(chosen)) {
+    const o = document.createElement('option');
+    o.value = chosen;
+    o.textContent = `${chosen} (nicht gefunden)`;
+    opts.push(o);
+  }
+  sel.replaceChildren(...opts);
+  sel.value = chosen ?? '';
+}
+
+async function loadDevices() {
+  try {
+    const d = await invoke('list_audio_devices');
+    $('audio-box').hidden = !d.supported;
+    if (!d.supported) return;
+    fillSelect($('in-dev'), d.inputs, d.defaultInput, d.selectedInput);
+    fillSelect($('out-dev'), d.outputs, d.defaultOutput, d.selectedOutput);
+  } catch {
+    $('audio-box').hidden = true;
+  }
+}
+
+function saveDevices() {
+  invoke('set_audio_devices', { input: $('in-dev').value || null, output: $('out-dev').value || null }).catch(() => {});
+}
+
+$('in-dev').addEventListener('change', saveDevices);
+$('out-dev').addEventListener('change', saveDevices);
+$('dev-refresh').addEventListener('click', loadDevices);
 
 /* ---------- Gespeicherte Server ---------- */
 
@@ -313,10 +414,12 @@ $('disconnect-btn').addEventListener('click', async () => {
   resetRadio();
   show('connect');
   invoke('load_settings').then((s) => applySettings(s)).catch(() => {});
+  loadDevices();
 });
 
 listen('state', (e) => { state = e.payload; render(); });
 listen('speaking', (e) => { speaking = e.payload; render(); });
+listen('levels', (e) => onLevels(e.payload));
 listen('latency', (e) => { latencyMs = e.payload; latencyAt = Date.now(); renderSignal(); });
 listen('notice', (e) => { $('who-text').textContent = String(e.payload).toUpperCase(); });
 listen('plugin', (e) => console.debug('plugin data', e.payload));
@@ -330,6 +433,9 @@ listen('disconnected', (e) => {
 setInterval(() => { if (!$('radio').hidden) renderSignal(); }, 1000);
 
 invoke('load_settings').then((s) => applySettings(s)).catch(() => {});
+
+buildEq();
+loadDevices();
 
 // Version anzeigen, danach einmal still nach einem Update sehen.
 initVersion().then(() => checkUpdate(false));
