@@ -10,6 +10,8 @@ let latencyMs = null;    // letzte Ping-Laufzeit
 let latencyAt = 0;       // Zeitpunkt der letzten Antwort
 let username = '';
 let listOpen = false;
+let version = '';
+let pendingUpdate = null;
 
 const STALE_MS = 13000;  // Pings kommen alle 4 s; danach gilt die Verbindung als ohne Signal
 
@@ -218,6 +220,60 @@ function applySettings(s, selectKey) {
   fillForm(cur);
 }
 
+/* ---------- Version und Updates ---------- */
+
+function setBootMsg(text) {
+  $('idle-msg').textContent = text;
+}
+
+function showUpdate(u) {
+  pendingUpdate = u;
+  $('update-text').textContent = `Update v${u.version} verfügbar (installiert: v${version})`;
+  $('update').hidden = false;
+  document.body.classList.add('has-update');
+}
+
+function hideUpdate() {
+  $('update').hidden = true;
+  document.body.classList.remove('has-update');
+}
+
+// Beim Start still (ohne Netz soll nichts stören); manuell mit Rückmeldung.
+async function checkUpdate(manual) {
+  if (manual) setBootMsg('PRÜFE UPDATE …');
+  try {
+    const r = await invoke('check_update');
+    if (r.update) {
+      showUpdate(r.update);
+      if (manual) setBootMsg(`UPDATE V${r.update.version}`);
+    } else if (manual) {
+      setBootMsg(r.devBuild ? 'ENTWICKLUNGSVERSION' : 'AKTUELL');
+    }
+  } catch (e) {
+    console.debug('update check failed', e);
+    if (manual) setBootMsg('PRÜFUNG FEHLGESCHLAGEN');
+  }
+}
+
+async function initVersion() {
+  try {
+    version = await invoke('app_version');
+    $('boot-ver').textContent = `V${version}`;
+    $('version-plate').textContent = `MUMBLE·FUNK MF-1 · V${version}`;
+    $('version-plate-radio').textContent = `MUMBLE·FUNK MF-1 · V${version}`;
+  } catch { /* Anzeige ist optional */ }
+}
+
+$('update-get').addEventListener('click', () => {
+  if (!pendingUpdate) return;
+  // Direkter Download; falls das System den Link nicht öffnet, die Release-Seite.
+  invoke('open_update_url', { url: pendingUpdate.url })
+    .catch(() => invoke('open_update_url', { url: pendingUpdate.page }))
+    .catch((e) => showError(String(e)));
+});
+$('update-later').addEventListener('click', hideUpdate);
+$('update-check').addEventListener('click', () => checkUpdate(true));
+
 /* ---------- Ereignisse verdrahten ---------- */
 
 // Zeiger-Ereignisse decken Maus, Touch und Stift ab; "capture" hält das Loslassen auch außerhalb des Knopfs.
@@ -274,3 +330,6 @@ listen('disconnected', (e) => {
 setInterval(() => { if (!$('radio').hidden) renderSignal(); }, 1000);
 
 invoke('load_settings').then((s) => applySettings(s)).catch(() => {});
+
+// Version anzeigen, danach einmal still nach einem Update sehen.
+initVersion().then(() => checkUpdate(false));

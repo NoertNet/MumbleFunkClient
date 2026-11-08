@@ -32,6 +32,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # Every build gets a version that rises with the run number (tags use their own number), so the
+      # in-app update check has something to compare and an installer can replace the previous one.
+      # It is applied with `--config` (the TAURI_CONFIG env var is overwritten by the CLI itself).
+      - name: Set app version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; else v="0.1.$GITHUB_RUN_NUMBER"; fi
+          echo "APP_VERSION=$v" >> "$GITHUB_ENV"
+          echo "FUNK_VERSION=$v" >> "$GITHUB_ENV"   # compiled into the app (see build_version in lib.rs)
       # Prebuilt CLI from npm instead of compiling cargo-tauri (~7 min).
       - run: npm install -g @tauri-apps/cli@^2
       - name: Build funk-probe
@@ -43,13 +52,49 @@ jobs:
           if-no-files-found: error
       - name: Build app
         working-directory: app/src-tauri
-        run: tauri build
+        shell: bash
+        run: tauri build --config "{\"version\":\"$APP_VERSION\"}"
       - uses: actions/upload-artifact@v4
         with:
           name: mumble-funk-Windows
           path: |
             target/release/bundle/**/*.msi
             target/release/bundle/**/*-setup.exe
+          if-no-files-found: error
+
+  linux:
+    # Built on the oldest supported Ubuntu so the AppImage/deb also run on newer releases (glibc).
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libasound2-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf
+      # Every build gets a version that rises with the run number (tags use their own number), so the
+      # in-app update check has something to compare and an installer can replace the previous one.
+      # It is applied with `--config` (the TAURI_CONFIG env var is overwritten by the CLI itself).
+      - name: Set app version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; else v="0.1.$GITHUB_RUN_NUMBER"; fi
+          echo "APP_VERSION=$v" >> "$GITHUB_ENV"
+          echo "FUNK_VERSION=$v" >> "$GITHUB_ENV"   # compiled into the app (see build_version in lib.rs)
+      - run: npm install -g @tauri-apps/cli@^2
+      - name: Build app
+        working-directory: app/src-tauri
+        env:
+          NO_STRIP: "true"
+        run: tauri build --bundles deb,appimage --config "{\"version\":\"$APP_VERSION\"}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mumble-funk-Linux
+          path: |
+            target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
   android:
@@ -74,6 +119,15 @@ jobs:
       - name: Install cargo-tauri
         if: steps.tauri-cli.outputs.cache-hit != 'true'
         run: cargo install tauri-cli --version "^2" --locked
+      # Every build gets a version that rises with the run number (tags use their own number), so the
+      # in-app update check has something to compare and an installer can replace the previous one.
+      # It is applied with `--config` (the TAURI_CONFIG env var is overwritten by the CLI itself).
+      - name: Set app version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; else v="0.1.$GITHUB_RUN_NUMBER"; fi
+          echo "APP_VERSION=$v" >> "$GITHUB_ENV"
+          echo "FUNK_VERSION=$v" >> "$GITHUB_ENV"   # compiled into the app (see build_version in lib.rs)
       - name: Locate NDK
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
@@ -121,9 +175,15 @@ jobs:
       # android-patch.py's gradle config. versionCode rises with every run so APKs update in place.
       - name: Build release APK
         working-directory: app/src-tauri
-        env:
-          TAURI_CONFIG: '{"bundle":{"android":{"versionCode":${{ github.run_number }}}}}'
-        run: cargo tauri android build --apk --target aarch64 --ci
+        run: |
+          cargo tauri android build --apk --target aarch64 --ci \
+            --config "{\"version\":\"$APP_VERSION\",\"bundle\":{\"android\":{\"versionCode\":$GITHUB_RUN_NUMBER}}}"
+      - name: Verify APK version
+        run: |
+          apk=$(find app/src-tauri/gen/android/app/build/outputs/apk -name '*.apk' | head -1)
+          aapt2=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort | tail -1)
+          "$aapt2" dump badging "$apk" | grep -E "^package:"
+          "$aapt2" dump badging "$apk" | grep -q "versionName='$APP_VERSION'" || { echo "APK versionName is not $APP_VERSION" >&2; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: mumble-funk-android
@@ -134,7 +194,7 @@ jobs:
   # through workflow artifacts. Branch pushes update the rolling pre-release "latest-dev";
   # pushing a tag like v0.2.0 creates a regular release.
   release:
-    needs: [test, windows, android]
+    needs: [test, windows, linux, android]
     if: >-
       github.event_name != 'pull_request' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/claude/') || startsWith(github.ref, 'refs/tags/v'))
@@ -155,8 +215,22 @@ jobs:
           pick '*-setup.exe' MumbleFunk-Windows-setup.exe
           pick '*.msi' MumbleFunk-Windows.msi
           pick '*.apk' MumbleFunk-Android.apk
+          pick '*.deb' MumbleFunk-Linux.deb
+          pick '*.AppImage' MumbleFunk-Linux.AppImage
           pick 'funk-probe.exe' funk-probe-Windows.exe
-          test -f out/MumbleFunk-Android.apk && test -f out/MumbleFunk-Windows-setup.exe
+          for f in MumbleFunk-Android.apk MumbleFunk-Windows-setup.exe MumbleFunk-Linux.deb MumbleFunk-Linux.AppImage; do
+            test -f "out/$f" || { echo "required file missing: $f" >&2; exit 1; }
+          done
+          # latest.json is what the app fetches at start to learn whether a newer build exists.
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then tag="$GITHUB_REF_NAME"; v="${tag#v}"; else tag=latest-dev; v="0.1.$GITHUB_RUN_NUMBER"; fi
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
+          jq -n --arg v "$v" --arg c "$GITHUB_SHA" --arg b "$base" --arg page "https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag" \
+            '{version: $v, commit: $c, page: $page, assets: {
+                windows: ($b + "/MumbleFunk-Windows-setup.exe"),
+                android: ($b + "/MumbleFunk-Android.apk"),
+                "linux-appimage": ($b + "/MumbleFunk-Linux.AppImage"),
+                "linux-deb": ($b + "/MumbleFunk-Linux.deb")}}' > out/latest.json
+          cat out/latest.json
           (cd out && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
       - name: Publish release
         env:
@@ -169,6 +243,8 @@ jobs:
             echo
             echo "- **Android:** \`MumbleFunk-Android.apk\` herunterladen und installieren. Updates überschreiben die alte Version."
             echo "- **Windows:** \`MumbleFunk-Windows-setup.exe\` ausführen."
+            echo "- **Ubuntu/Linux:** \`MumbleFunk-Linux.AppImage\` (ausführbar machen und starten) oder \`MumbleFunk-Linux.deb\` (\`sudo apt install ./MumbleFunk-Linux.deb\`)."
+            echo "- Die App prüft beim Start selbst, ob hier eine neuere Version liegt (\`latest.json\`)."
             echo "- Prüfsummen: \`SHA256SUMS.txt\`"
           } > notes.md
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then

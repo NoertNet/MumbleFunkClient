@@ -19,6 +19,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"
 funk-core = { path = "../../crates/funk-core" }
 funk-audio = { path = "../../crates/funk-audio" }
 tracing = "0.1"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+tauri-plugin-opener = "2"
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"

@@ -4,6 +4,7 @@ mod android;
 mod session;
 mod settings;
 mod status;
+mod update;
 
 use std::sync::Mutex;
 
@@ -73,11 +74,51 @@ fn forget_profile(app: AppHandle, key: String) -> settings::Settings {
     s
 }
 
+/// Version of this build. CI stamps `FUNK_VERSION` (0.1.<run number>) into the compile step, which
+/// works the same on every platform, including Android where the build runs inside Gradle. Local
+/// builds fall back to the Tauri config version (0.1.0 = "development build").
+fn build_version(config_version: &str) -> String {
+    option_env!("FUNK_VERSION").unwrap_or(config_version).to_string()
+}
+
+#[tauri::command]
+fn app_version(app: AppHandle) -> String {
+    build_version(&app.package_info().version.to_string())
+}
+
+/// Asks the release page whether a newer build exists. Network problems come back as `Err`; the UI
+/// stays silent about them at start-up and shows them only for the manual check.
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Result<update::CheckResult, String> {
+    let current = build_version(&app.package_info().version.to_string());
+    tauri::async_runtime::spawn_blocking(move || update::check_blocking(&current))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Opens a download link in the system browser. Only our own release URLs are accepted.
+#[tauri::command]
+fn open_update_url(app: AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if !url.starts_with(update::ALLOWED_PREFIX) {
+        return Err("Link nicht erlaubt".into());
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    // `funk-app --version` prints the build's version without opening a window (useful for support
+    // and for checking that CI stamped the right number).
+    if std::env::args().any(|a| a == "--version") {
+        println!("{}", build_version(&context.package_info().version.to_string()));
+        return;
+    }
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .manage(App::default())
-        .invoke_handler(tauri::generate_handler![connect, disconnect, join_channel, ptt, load_settings, forget_profile])
+        .invoke_handler(tauri::generate_handler![connect, disconnect, join_channel, ptt, load_settings, forget_profile, app_version, check_update, open_update_url])
         .on_window_event(|w, ev| {
             if let tauri::WindowEvent::Destroyed = ev {
                 if let Some(s) = w.app_handle().state::<App>().session.lock().unwrap().take() {
@@ -85,6 +126,6 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running Mumble Funk");
 }

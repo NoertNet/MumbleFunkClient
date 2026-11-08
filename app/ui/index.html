@@ -8,12 +8,19 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- Update-Hinweis (wird nur eingeblendet, wenn eine neuere Version existiert) -->
+  <div id="update" class="update" role="status" hidden>
+    <span id="update-text"></span>
+    <button id="update-get" type="button" class="key small power">Holen</button>
+    <button id="update-later" type="button" class="key small">Später</button>
+  </div>
+
   <!-- ============ Einschalten / Verbinden ============ -->
   <main id="connect" class="screen">
     <div class="device">
       <div class="antenna" aria-hidden="true"></div>
       <div class="lcd boot">
-        <div class="lcd-row small"><span>MF-1 · SIMPLEX</span><span>AUS</span></div>
+        <div class="lcd-row small"><span>MF-1 · SIMPLEX</span><span id="boot-ver">AUS</span></div>
         <div class="lcd-big">MUMBLE FUNK</div>
         <div class="lcd-row small"><span id="busy" role="status" hidden>VERBINDE …</span><span id="idle-msg">BEREIT ZUM EINSCHALTEN</span></div>
       </div>
@@ -40,6 +47,10 @@
         </div>
       </form>
       <div class="grille" aria-hidden="true"></div>
+      <div class="foot">
+        <span class="plate" id="version-plate">MUMBLE·FUNK MF-1</span>
+        <button id="update-check" type="button" class="key small">Update suchen</button>
+      </div>
     </div>
   </main>
 
@@ -82,7 +93,7 @@
 
       <div class="grille" aria-hidden="true"></div>
       <div class="foot">
-        <span class="plate">MUMBLE·FUNK MF-1</span>
+        <span class="plate" id="version-plate-radio">MUMBLE·FUNK MF-1</span>
         <button id="disconnect-btn" type="button" class="key small">AUS</button>
       </div>
     </div>

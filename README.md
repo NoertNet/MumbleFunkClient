@@ -33,8 +33,16 @@ Simplex/Busy zu beobachten. Zweites Terminal mit anderem Benutzer startet man oh
 ## App bauen und starten
 
 **Fertige Programme** stehen unter *Releases* (rechts auf der GitHub-Startseite): `latest-dev` ist die jeweils neueste
-Entwicklungsversion mit `MumbleFunk-Android.apk`, `MumbleFunk-Windows-setup.exe` und Prüfsummen. Ein Tag wie `v0.2.0`
+Entwicklungsversion mit `MumbleFunk-Android.apk`, `MumbleFunk-Windows-setup.exe`, `MumbleFunk-Linux.AppImage` / `.deb` und Prüfsummen. Ein Tag wie `v0.2.0`
 erzeugt automatisch ein reguläres Release.
+
+**Ubuntu/Linux:** `MumbleFunk-Linux.AppImage` ausführbar machen (`chmod +x`) und starten, oder
+`sudo apt install ./MumbleFunk-Linux.deb`. Gebaut wird auf Ubuntu 22.04, läuft damit auch auf neueren Versionen.
+
+**Updates:** Die App prüft beim Start (und auf Knopfdruck über „Update suchen“), ob unter *Releases* eine neuere Version liegt
+(Datei `latest.json`), und zeigt dann einen Hinweis mit „Holen“. Das öffnet den Download im Browser; installiert wird nicht
+automatisch. Jede Version trägt `0.1.<Laufnummer>`; `funk-app --version` zeigt sie auch ohne Fenster. Lokal gebaute Versionen
+(`0.1.0`) werden nicht geprüft.
 
 *Android-Signatur:* Damit eine neue APK über die alte installiert werden kann, muss sie immer mit demselben Schlüssel
 signiert sein. CI erzeugt dafür beim ersten Lauf einen Schlüssel und legt ihn im Actions-Cache ab (nichts davon liegt im

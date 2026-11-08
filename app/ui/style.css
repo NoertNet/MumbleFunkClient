@@ -110,8 +110,17 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 /* ---------- Unterkante ---------- */
 .grille { height: 26px; margin: 12px 14px 0; opacity: .8; border-radius: 6px;
   background: repeating-linear-gradient(90deg, #0b0c0a 0 3px, transparent 3px 9px); }
+.foot .key { white-space: nowrap; }
 .foot { display: flex; justify-content: space-between; align-items: center; margin: 12px 4px 0; }
 .plate { font: .68rem var(--mono); letter-spacing: .18em; color: #6f7766; }
+
+/* ---------- Update-Hinweis ---------- */
+.update { position: fixed; z-index: 10; top: calc(env(safe-area-inset-top) + 8px); left: 50%; transform: translateX(-50%);
+  width: min(396px, calc(100% - 20px)); display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 12px;
+  background: #0b0d0a; border: 2px solid var(--amber); color: var(--amber); font: .72rem var(--mono); letter-spacing: .06em;
+  text-transform: uppercase; box-shadow: 0 8px 24px #000c, 0 0 14px var(--amber-glow); }
+.update span { flex: 1; min-width: 0; }
+body.has-update .screen { padding-top: calc(env(safe-area-inset-top) + 92px); }
 
 /* ---------- Formular ---------- */
 form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 18px; }
