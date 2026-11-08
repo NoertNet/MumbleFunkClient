@@ -175,18 +175,23 @@ jobs:
           echo "FUNK_KEYSTORE=$ks" >> "$GITHUB_ENV"
           echo "FUNK_KEYSTORE_PASSWORD=$pw" >> "$GITHUB_ENV"
       # Optimised release build (the debug profile makes the Opus codec far too slow), signed by
-      # android-patch.py's gradle config. versionCode rises with every run so APKs update in place.
+      # android-patch.py's gradle config. Tauri derives versionCode = major*1000000 + minor*1000 +
+      # patch from the version (0.1.N -> 1000+N). Never set it separately: APKs built before the
+      # version stamping all carry 1000, and a smaller code would be refused as a downgrade.
       - name: Build release APK
         working-directory: app/src-tauri
         run: |
-          cargo tauri android build --apk --target aarch64 --ci \
-            --config "{\"version\":\"$APP_VERSION\",\"bundle\":{\"android\":{\"versionCode\":$GITHUB_RUN_NUMBER}}}"
+          cargo tauri android build --apk --target aarch64 --ci --config "{\"version\":\"$APP_VERSION\"}"
       - name: Verify APK version
         run: |
           apk=$(find app/src-tauri/gen/android/app/build/outputs/apk -name '*.apk' | head -1)
           aapt2=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort | tail -1)
           "$aapt2" dump badging "$apk" | grep -E "^package:"
+          IFS=. read -r ma mi pa <<< "$APP_VERSION"
+          code=$((ma * 1000000 + mi * 1000 + pa))
           "$aapt2" dump badging "$apk" | grep -q "versionName='$APP_VERSION'" || { echo "APK versionName is not $APP_VERSION" >&2; exit 1; }
+          "$aapt2" dump badging "$apk" | grep -q "versionCode='$code'" || { echo "APK versionCode is not $code" >&2; exit 1; }
+          [ "$code" -gt 1000 ] || { echo "versionCode $code would be a downgrade from earlier builds (1000)" >&2; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: mumble-funk-android

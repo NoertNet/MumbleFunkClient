@@ -152,6 +152,37 @@ mod tests {
         assert!(evaluate("0.1.19", &evil, "android").is_none(), "foreign link is rejected");
     }
 
+    /// The exact text the release job publishes (jq output), so a key or shape mismatch between the
+    /// workflow and this parser fails here instead of silently meaning "no update" forever.
+    const PUBLISHED: &str = r#"{
+      "version": "0.1.15",
+      "commit": "8d78210f17d8da8156138b1d6aca561ab3c32013",
+      "page": "https://github.com/NoertNet/MumbleFunkClient/releases/tag/latest-dev",
+      "assets": {
+        "windows": "https://github.com/NoertNet/MumbleFunkClient/releases/download/latest-dev/MumbleFunk-Windows-setup.exe",
+        "android": "https://github.com/NoertNet/MumbleFunkClient/releases/download/latest-dev/MumbleFunk-Android.apk",
+        "linux-appimage": "https://github.com/NoertNet/MumbleFunkClient/releases/download/latest-dev/MumbleFunk-Linux.AppImage",
+        "linux-deb": "https://github.com/NoertNet/MumbleFunkClient/releases/download/latest-dev/MumbleFunk-Linux.deb"
+      }
+    }"#;
+
+    #[test]
+    fn parses_the_published_latest_json() {
+        let l: Latest = serde_json::from_str(PUBLISHED).unwrap();
+        for (key, file) in [
+            ("windows", "MumbleFunk-Windows-setup.exe"),
+            ("android", "MumbleFunk-Android.apk"),
+            ("linux-appimage", "MumbleFunk-Linux.AppImage"),
+            ("linux-deb", "MumbleFunk-Linux.deb"),
+        ] {
+            let u = evaluate("0.1.14", &l, key).unwrap_or_else(|| panic!("no update offered for {key}"));
+            assert!(u.url.ends_with(file), "{key}: {}", u.url);
+            assert_eq!(u.version, "0.1.15");
+            assert!(u.page.ends_with("tag/latest-dev"));
+        }
+        assert!(evaluate("0.1.15", &l, "android").is_none());
+    }
+
     #[test]
     fn dev_builds_are_not_checked() {
         let r = check_blocking(DEV_VERSION).unwrap();
