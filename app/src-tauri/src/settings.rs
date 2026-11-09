@@ -25,6 +25,17 @@ impl Profile {
     }
 }
 
+/// A global PTT hotkey as the UI recorded it: the key (layout-resolved, e.g. `KeyT`, `F9`) and modifiers.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct HotkeySpec {
+    pub code: String,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub meta: bool,
+}
+
 #[derive(Default, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
@@ -34,6 +45,8 @@ pub struct Settings {
     /// Audio devices chosen on the desktop (by name); `None` = system default.
     pub input_device: Option<String>,
     pub output_device: Option<String>,
+    /// Global push-to-talk hotkey (desktop only); `None` = off.
+    pub ptt_hotkey: Option<HotkeySpec>,
     /// Trust-on-first-use certificate fingerprints, key `host:port`, value hex SHA-256.
     pub pins: HashMap<String, String>,
 }

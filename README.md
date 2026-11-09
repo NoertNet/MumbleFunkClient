@@ -100,6 +100,16 @@ Server, Rufzeichen, Geräte und Zertifikat werden in `~/.config/mumble-funk/cli.
 Auf der Textkonsole (ohne Unicode-Blockzeichen) hilft `--ascii`. Beim Beenden, bei SIGTERM und bei abgerissener SSH-Verbindung
 wird ein laufendes Senden sauber beendet und das Terminal zurückgesetzt.
 
+## Globaler PTT-Hotkey (Computer)
+
+Auf dem Einschalt-Bildschirm unter „Globaler PTT-Hotkey“ lässt sich eine Taste festlegen („Taste aufnehmen“), mit der man auch bei
+minimiertem oder nicht aktivem Fenster sendet: gedrückt halten = senden, loslassen = Ende (nach 90 s wird automatisch freigegeben).
+Die Taste ist danach in allen anderen Programmen nicht mehr benutzbar, deshalb gelten Regeln: **erlaubt** sind F-Tasten (außer F12),
+Pause, Rollen oder Kombinationen mit mindestens zwei Zusatztasten (z. B. Strg+Alt+T); **nicht erlaubt** sind die Leertaste (auch mit
+Zusatztasten), einzelne Buchstaben/Ziffern und Kürzel wie Strg+C. Buchstaben richten sich nach dem Tastaturlayout (auch QWERTZ).
+Ist die Kombination schon von einem anderen Programm belegt, steht das dort; der bisherige Hotkey bleibt dann aktiv. Unter Linux
+funktioniert der Hotkey nur mit X11, nicht unter Wayland. Maus- und Spezialtasten sind nicht möglich.
+
 ## Audio-Geräte (Computer)
 
 Auf dem Einschalt-Bildschirm gibt es den Bereich „Audio-Geräte“ mit je einer Auswahl für Mikrofon und Lautsprecher

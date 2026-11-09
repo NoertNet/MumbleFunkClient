@@ -46,6 +46,16 @@
           <button id="dev-refresh" type="button" class="key small">Liste aktualisieren</button>
           <p class="hint">Gilt ab der nächsten Verbindung. Ohne Auswahl wird das Standardgerät des Systems benutzt.</p>
         </details>
+        <details id="hotkey-box" hidden>
+          <summary>Globaler PTT-Hotkey</summary>
+          <p id="hotkey-current" class="hint">Aktuell: keiner</p>
+          <div class="row">
+            <button id="hotkey-record" type="button" class="key small">Taste aufnehmen</button>
+            <button id="hotkey-clear" type="button" class="key small" hidden>Entfernen</button>
+          </div>
+          <p id="hotkey-msg" class="hint" role="status"></p>
+          <p class="hint">Senden, solange die Taste gehalten wird – auch bei minimiertem oder nicht aktivem Fenster. Die Taste ist dann in allen anderen Programmen nicht mehr benutzbar. Erlaubt: F-Tasten (außer F12), Pause, Rollen oder Kombinationen mit mindestens zwei Zusatztasten, z. B. Strg+Alt+T. Die Leertaste ist ausgeschlossen.</p>
+        </details>
         <button id="connect-btn" type="submit" class="key power">Einschalten</button>
         <p id="error" role="alert" hidden></p>
         <div id="pin-box" hidden>
@@ -104,7 +114,7 @@
 
       <button id="ptt" type="button" aria-pressed="false" aria-label="Push to talk, gedrückt halten zum Sprechen">
         <span id="ptt-label">PTT</span>
-        <small>gedrückt halten · Leertaste</small>
+        <small id="ptt-hint">gedrückt halten · Leertaste</small>
       </button>
 
       <div class="foot">

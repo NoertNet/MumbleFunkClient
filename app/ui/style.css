@@ -73,6 +73,7 @@ body { background: radial-gradient(120% 80% at 50% 0%, #1a1d17 0%, var(--bg) 60%
 .lcd-users li { display: flex; justify-content: space-between; padding: 1px 4px; }
 .lcd-users li.me::after { content: "ICH"; opacity: .6; font-size: .7rem; }
 .lcd-users li.speaking { background: var(--lcd); color: #050805; text-shadow: none; }
+.lcd.boot { flex: none; min-height: 0; } /* Einschalt-Display bleibt kompakt; nur das Funkgerät-Display füllt die Höhe */
 .boot .lcd-big { margin: 14px 0; text-align: center; }
 [data-mode="busy"] .lcd-mode { animation: blink .5s steps(2, jump-none) infinite; }
 @keyframes blink { 50% { opacity: .25; } }
@@ -152,6 +153,8 @@ details[open] { display: grid; gap: 10px; padding-bottom: 12px; }
 details[open] summary { padding-bottom: 0; }
 details select { width: 100%; }
 .hint { margin: 0; font: .7rem var(--mono); color: var(--muted); }
+.hint.warn { color: var(--red); }
+#hotkey-record.recording { background: linear-gradient(#e7a32f, #b9780f); color: #1a1205; }
 
 /* ---------- Formular ---------- */
 form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 18px; }

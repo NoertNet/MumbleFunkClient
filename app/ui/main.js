@@ -5,7 +5,8 @@ const $ = (id) => document.getElementById(id);
 
 let state = null;        // letzter Serverzustand (Kanäle, Benutzer)
 let speaking = [];       // Sessions, die gerade zu hören sind
-let pttDown = false;
+let pttDown = false;     // wir senden gerade (Fenster oder globaler Hotkey), vom Programm gemeldet
+let uiHeld = false;      // Knopf/Leertaste im Fenster wird gehalten
 let latencyMs = null;    // letzte Ping-Laufzeit
 let latencyAt = 0;       // Zeitpunkt der letzten Antwort
 let username = '';
@@ -137,15 +138,19 @@ function stepChannel(dir) {
 }
 
 function setPtt(down) {
-  if (down === pttDown || $('radio').hidden) return;
-  pttDown = down;
-  try { if (down && navigator.vibrate) navigator.vibrate(12); } catch { /* optional */ }
+  if (down === uiHeld || $('radio').hidden) return;
+  uiHeld = down;
+  if (down) {
+    pttDown = true; // sofort sichtbar; das Programm bestätigt gleich per "ptt-state"
+    try { if (navigator.vibrate) navigator.vibrate(12); } catch { /* optional */ }
+  }
   render();
-  invoke('ptt', { down }).catch((e) => { pttDown = false; render(); showError(String(e)); });
+  invoke('ptt', { down }).catch((e) => { uiHeld = false; pttDown = false; render(); showError(String(e)); });
 }
 
 function resetRadio() {
   setPtt(false);
+  uiHeld = false; pttDown = false;
   state = null; speaking = []; latencyMs = null; latencyAt = 0; listOpen = false;
   $('channels').hidden = true;
   $('chan-list-btn').setAttribute('aria-expanded', 'false');
@@ -292,6 +297,107 @@ $('in-dev').addEventListener('change', saveDevices);
 $('out-dev').addEventListener('change', saveDevices);
 $('dev-refresh').addEventListener('click', loadDevices);
 
+/* ---------- Globaler PTT-Hotkey (nur Computer) ---------- */
+
+let hotkeyRecording = false;
+
+function hotkeyMessage(text, warn) {
+  $('hotkey-msg').textContent = text || '';
+  $('hotkey-msg').classList.toggle('warn', !!warn);
+}
+
+function renderHotkey(d) {
+  $('hotkey-box').hidden = !d.supported;
+  if (!d.supported) return;
+  $('hotkey-current').textContent = d.display ? `Aktuell: ${d.display}` : 'Aktuell: keiner';
+  $('hotkey-clear').hidden = !d.display;
+  hotkeyMessage(d.error, !!d.error);
+  $('ptt-hint').textContent = d.display ? `gedrückt halten · Leertaste · Hotkey ${d.display}` : 'gedrückt halten · Leertaste';
+}
+
+async function loadHotkey() {
+  try { renderHotkey(await invoke('get_hotkey')); } catch { $('hotkey-box').hidden = true; }
+}
+
+// Buchstaben nach dem, was auf der Taste steht (Tastaturlayout!), nicht nach ihrer Position: auf einer
+// deutschen Tastatur meldet event.code "KeyY" für die Taste mit dem Z. Windows registriert Hotkeys nach
+// dem Buchstaben der Taste.
+async function letterFor(e) {
+  if (/^[a-zA-Z]$/.test(e.key)) return e.key.toUpperCase();
+  try { // AltGr-Kombinationen liefern in e.key ein Sonderzeichen; dann die Layout-Tabelle fragen
+    const map = await navigator.keyboard?.getLayoutMap?.();
+    const ch = map?.get(e.code);
+    if (ch && /^[a-z]$/i.test(ch)) return ch.toUpperCase();
+  } catch { /* nicht verfügbar */ }
+  return null;
+}
+
+async function codeFor(e) {
+  if (/^F([1-9]|1\d|2[0-4])$/.test(e.code)) return e.code;   // Funktionstasten sind layoutunabhängig
+  if (e.code === 'Pause' || e.code === 'ScrollLock') return e.code;
+  if (/^Digit\d$/.test(e.code)) return e.code;
+  const letter = await letterFor(e);
+  return letter ? `Key${letter}` : null;
+}
+
+const MODIFIER_KEYS = ['Control', 'Alt', 'Shift', 'Meta', 'AltGraph', 'OS'];
+
+async function stopRecording() {
+  hotkeyRecording = false;
+  window.removeEventListener('keydown', onHotkeyKey, true);
+  $('hotkey-record').textContent = 'Taste aufnehmen';
+  $('hotkey-record').classList.remove('recording');
+}
+
+async function onHotkeyKey(e) {
+  if (!hotkeyRecording) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.repeat || MODIFIER_KEYS.includes(e.key)) return; // erst die eigentliche Taste abwarten
+  if (e.key === 'Escape') {
+    await stopRecording();
+    renderHotkey(await invoke('resume_hotkey'));
+    return;
+  }
+  if (e.code === 'Space') {
+    hotkeyMessage('Die Leertaste ist als globaler Hotkey ausgeschlossen: sie wäre sonst in allen Programmen blockiert.', true);
+    return; // weiter aufnehmen
+  }
+  const code = await codeFor(e);
+  if (!code) {
+    hotkeyMessage('Diese Taste wird nicht unterstützt. Nimm eine F-Taste, Pause, Rollen oder Buchstabe/Ziffer mit Zusatztasten.', true);
+    return; // weiter aufnehmen
+  }
+  await stopRecording();
+  try {
+    renderHotkey(await invoke('set_hotkey', { spec: { code, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey } }));
+    hotkeyMessage('Gespeichert.', false);
+  } catch (err) {
+    const msg = String(err);
+    renderHotkey(await invoke('resume_hotkey')); // der bisherige Hotkey bleibt aktiv
+    hotkeyMessage(msg, true);
+  }
+}
+
+$('hotkey-record').addEventListener('click', async () => {
+  if (hotkeyRecording) { // zweiter Klick bricht ab
+    await stopRecording();
+    renderHotkey(await invoke('resume_hotkey'));
+    return;
+  }
+  // Der bisherige Hotkey wird freigegeben, sonst verschluckt ihn das System und das Fenster sieht ihn nie.
+  await invoke('pause_hotkey');
+  hotkeyRecording = true;
+  $('hotkey-record').textContent = 'Abbrechen (Esc)';
+  $('hotkey-record').classList.add('recording');
+  hotkeyMessage('Drücke jetzt die gewünschte Taste oder Tastenkombination …', false);
+  window.addEventListener('keydown', onHotkeyKey, true);
+});
+
+$('hotkey-clear').addEventListener('click', async () => {
+  try { renderHotkey(await invoke('set_hotkey', { spec: null })); hotkeyMessage('Hotkey entfernt.', false); } catch (err) { hotkeyMessage(String(err), true); }
+});
+
 /* ---------- Gespeicherte Server ---------- */
 
 let profiles = [];
@@ -419,6 +525,7 @@ $('disconnect-btn').addEventListener('click', async () => {
 
 listen('state', (e) => { state = e.payload; render(); });
 listen('speaking', (e) => { speaking = e.payload; render(); });
+listen('ptt-state', (e) => { pttDown = !!e.payload; render(); });
 listen('levels', (e) => onLevels(e.payload));
 listen('latency', (e) => { latencyMs = e.payload; latencyAt = Date.now(); renderSignal(); });
 listen('notice', (e) => { $('who-text').textContent = String(e.payload).toUpperCase(); });
@@ -436,6 +543,7 @@ invoke('load_settings').then((s) => applySettings(s)).catch(() => {});
 
 buildEq();
 loadDevices();
+loadHotkey();
 
 // Version anzeigen, danach einmal still nach einem Update sehen.
 initVersion().then(() => checkUpdate(false));

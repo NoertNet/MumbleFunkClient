@@ -1,6 +1,9 @@
 //! Tauri shell: wires `funk-core` (protocol, voice) and `funk-audio` (devices) to the UI.
 
 mod android;
+#[cfg(desktop)]
+mod hotkey;
+mod ptt_sources;
 mod session;
 mod settings;
 mod status;
@@ -8,12 +11,35 @@ mod update;
 
 use std::sync::Mutex;
 
+use ptt_sources::{Effect, PttSources};
 use session::{Session, StateDto};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Default)]
 struct App {
     session: Mutex<Option<Session>>,
+    /// Who holds push-to-talk right now (window button/keys and the global hotkey).
+    sources: Mutex<PttSources>,
+    /// Why the saved global hotkey could not be registered (shown on the start screen).
+    hotkey_error: Mutex<Option<String>>,
+}
+
+/// Applies a PTT change to the live session and tells the UI the effective state. The UI renders from
+/// this event, because the hotkey can fire while the window is minimised.
+fn apply_ptt(app: &AppHandle, effect: Effect) {
+    let st = app.state::<App>();
+    if effect != Effect::None {
+        if let Some(s) = st.session.lock().unwrap().as_ref() {
+            s.ptt(effect == Effect::Start);
+        }
+    }
+    let transmitting = st.sources.lock().unwrap().transmitting();
+    let _ = app.emit("ptt-state", transmitting);
+}
+
+fn reset_ptt(app: &AppHandle) {
+    let eff = app.state::<App>().sources.lock().unwrap().reset();
+    apply_ptt(app, eff);
 }
 
 #[derive(serde::Deserialize)]
@@ -41,6 +67,7 @@ async fn connect(app: AppHandle, state: State<'_, App>, args: ConnectArgs) -> Re
     if let Some(old) = state.session.lock().unwrap().take() {
         old.close();
     }
+    reset_ptt(&app);
     let s = Session::connect(app, args).await?;
     let dto = ConnectDto { state: s.dto(), audio: s.audio.clone() };
     *state.session.lock().unwrap() = Some(s);
@@ -48,10 +75,11 @@ async fn connect(app: AppHandle, state: State<'_, App>, args: ConnectArgs) -> Re
 }
 
 #[tauri::command]
-fn disconnect(state: State<'_, App>) {
+fn disconnect(app: AppHandle, state: State<'_, App>) {
     if let Some(s) = state.session.lock().unwrap().take() {
         s.close();
     }
+    reset_ptt(&app);
 }
 
 #[tauri::command]
@@ -60,13 +88,150 @@ async fn join_channel(state: State<'_, App>, id: u32) -> Result<(), String> {
     client.ok_or("not connected")?.join_channel(id).await.map_err(|e| e.to_string())
 }
 
-/// Push-to-talk. `down=true` starts a transmission, `false` ends it with a terminator packet.
+/// Push-to-talk from the window (button, space bar). `down=true` starts a transmission, `false` ends
+/// it with a terminator packet, unless the global hotkey is still held.
 #[tauri::command]
-fn ptt(state: State<'_, App>, down: bool) -> Result<(), String> {
-    let guard = state.session.lock().unwrap();
-    let s = guard.as_ref().ok_or("not connected")?;
-    s.ptt(down);
+fn ptt(app: AppHandle, state: State<'_, App>, down: bool) -> Result<(), String> {
+    if state.session.lock().unwrap().is_none() {
+        return Err("not connected".into());
+    }
+    let eff = state.sources.lock().unwrap().ui(down);
+    apply_ptt(&app, eff);
     Ok(())
+}
+
+// ---------- global PTT hotkey (desktop only) ----------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HotkeyDto {
+    /// False on phones.
+    supported: bool,
+    /// Readable form of the saved hotkey, e.g. "Strg+Alt+T".
+    display: Option<String>,
+    /// Why registration failed (key taken by another program, reserved combination, ...).
+    error: Option<String>,
+}
+
+#[cfg(desktop)]
+fn register_error(raw: &str) -> String {
+    if raw.to_lowercase().contains("already") {
+        "Diese Tastenkombination ist schon von einem anderen Programm belegt.".into()
+    } else {
+        format!("Hotkey konnte nicht registriert werden: {raw}")
+    }
+}
+
+/// (Re-)registers the saved hotkey with the system and remembers a failure for the start screen.
+#[cfg(desktop)]
+fn register_saved(app: &AppHandle) -> HotkeyDto {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let saved = settings::load(app).ptt_hotkey;
+    let gs = app.global_shortcut();
+    let _ = gs.unregister_all();
+    let result: Result<(), String> = match &saved {
+        None => Ok(()),
+        Some(spec) => hotkey::shortcut(spec).and_then(|sc| gs.register(sc).map_err(|e| register_error(&e.to_string()))),
+    };
+    let error = result.err();
+    *app.state::<App>().hotkey_error.lock().unwrap() = error.clone();
+    HotkeyDto { supported: true, display: saved.as_ref().map(hotkey::describe), error }
+}
+
+/// Called by the system hotkey: press starts, release stops (reports can repeat; see `PttSources`).
+#[cfg(desktop)]
+fn on_hotkey(app: &AppHandle, down: bool) {
+    let st = app.state::<App>();
+    if st.session.lock().unwrap().is_none() {
+        return; // not connected: nothing to transmit on
+    }
+    let (eff, epoch) = {
+        let mut p = st.sources.lock().unwrap();
+        if down { p.hotkey_down() } else { (p.hotkey_up(), None) }
+    };
+    apply_ptt(app, eff);
+    // If the release is never seen (lost focus to the lock screen, ...) the transmitter must not stay open.
+    if let Some(epoch) = epoch {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(hotkey::TX_LIMIT).await;
+            let eff = app.state::<App>().sources.lock().unwrap().hotkey_expired(epoch);
+            if eff != Effect::None {
+                apply_ptt(&app, eff);
+                let _ = app.emit("notice", "Sendezeit-Limit erreicht: PTT wurde freigegeben");
+            }
+        });
+    }
+}
+
+#[tauri::command]
+fn get_hotkey(app: AppHandle, state: State<'_, App>) -> HotkeyDto {
+    #[cfg(desktop)]
+    {
+        let saved = settings::load(&app).ptt_hotkey;
+        HotkeyDto { supported: true, display: saved.as_ref().map(hotkey::describe), error: state.hotkey_error.lock().unwrap().clone() }
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (&app, &state);
+        HotkeyDto { supported: false, display: None, error: None }
+    }
+}
+
+/// Saves a recorded hotkey (or removes it with `None`). Refused keys and registration failures come
+/// back as errors and leave the previous hotkey untouched.
+#[tauri::command]
+fn set_hotkey(app: AppHandle, spec: Option<settings::HotkeySpec>) -> Result<HotkeyDto, String> {
+    #[cfg(desktop)]
+    {
+        let mut s = settings::load(&app);
+        let previous = s.ptt_hotkey.clone();
+        if let Some(spec) = &spec {
+            hotkey::validate(spec)?;
+        }
+        s.ptt_hotkey = spec;
+        settings::save(&app, &s);
+        let dto = register_saved(&app);
+        if let Some(err) = dto.error.clone() {
+            s.ptt_hotkey = previous;
+            settings::save(&app, &s);
+            register_saved(&app);
+            return Err(err);
+        }
+        Ok(dto)
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (&app, &spec);
+        Err("Globale Hotkeys gibt es nur am Computer".into())
+    }
+}
+
+/// While the UI records a new key, the current hotkey must be released or the system would swallow
+/// the very combination being recorded.
+#[tauri::command]
+fn pause_hotkey(app: AppHandle) {
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        let _ = app.global_shortcut().unregister_all();
+    }
+    #[cfg(not(desktop))]
+    let _ = &app;
+}
+
+#[tauri::command]
+fn resume_hotkey(app: AppHandle, state: State<'_, App>) -> HotkeyDto {
+    #[cfg(desktop)]
+    {
+        let _ = &state;
+        register_saved(&app)
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (&app, &state);
+        HotkeyDto { supported: false, display: None, error: None }
+    }
 }
 
 #[tauri::command]
@@ -165,10 +330,25 @@ pub fn run() {
         println!("{}", build_version(&context.package_info().version.to_string()));
         return;
     }
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .manage(App::default())
-        .invoke_handler(tauri::generate_handler![connect, disconnect, join_channel, ptt, load_settings, forget_profile, list_audio_devices, set_audio_devices, app_version, check_update, open_update_url])
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init()).manage(App::default());
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    on_hotkey(app, event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed);
+                })
+                .build(),
+        )
+        .setup(|app| {
+            register_saved(app.handle());
+            Ok(())
+        });
+    builder
+        .invoke_handler(tauri::generate_handler![
+            connect, disconnect, join_channel, ptt, load_settings, forget_profile, list_audio_devices, set_audio_devices,
+            get_hotkey, set_hotkey, pause_hotkey, resume_hotkey, app_version, check_update, open_update_url
+        ])
         .on_window_event(|w, ev| {
             if let tauri::WindowEvent::Destroyed = ev {
                 if let Some(s) = w.app_handle().state::<App>().session.lock().unwrap().take() {
