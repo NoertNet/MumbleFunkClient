@@ -70,6 +70,36 @@ cargo tauri android dev     # Handy per USB, Debugging aktiv
 ```
 Die Android-Teile (Mikrofon-Berechtigung, Foreground-Service für Empfang bei ausgeschaltetem Display) sind noch nicht umgesetzt.
 
+## Terminal-Version (Linux): `funk-tui`
+
+Dasselbe Funkgerät im Terminal, mit Display, Signalbalken, Equalizer und PTT-Feld (Grün = du sendest, Rot = jemand anderes).
+Gedacht für Rechner ohne Oberfläche, SSH und den Raspberry Pi. Download: `MumbleFunk-CLI-Linux-x86_64.tar.gz` bzw.
+`-aarch64.tar.gz` (Pi mit 64-Bit-System) unter *Releases*, entpacken, starten. Zum Selberbauen: `cargo build --release -p funk-tui`
+(braucht `libasound2-dev`).
+
+```bash
+./funk-tui funk.example.org -u Alpha1      # beim ersten Mal; danach genügt ./funk-tui
+FUNK_PASSWORD='geheim' ./funk-tui           # Passwort nie als Argument (sichtbar in `ps`); oder --ask-password
+./funk-tui --list-devices                   # Audio-Geräte anzeigen
+./funk-tui --input "USB Audio" --output "USB Audio"
+./funk-tui --no-audio                       # Testmodus ohne Audiogerät: zeigt Aktivität, PTT sendet Testton
+```
+
+Tasten: **Leertaste/Enter** = PTT, **←/→** = Kanal wechseln, **l** = Kanalliste, **q** oder Strg+C = Ende.
+Server, Rufzeichen, Geräte und Zertifikat werden in `~/.config/mumble-funk/cli.json` gemerkt (nur für dich lesbar).
+Ändert sich das Zertifikat, bricht das Programm ab; nur `--trust-new-cert` übernimmt das neue.
+
+**PTT im Terminal, bitte lesen:** Normale Terminals melden nicht, wann eine Taste *losgelassen* wird.
+- In Terminals mit dem Kitty-Tastaturprotokoll (kitty, WezTerm, foot, Ghostty, Alacritty) funktioniert **Halten**: gedrückt = senden, loslassen = Ende.
+- Überall sonst (GNOME-Terminal, xterm, Linux-Textkonsole, SSH aus vielen Clients) gilt **Umschalten**: einmal tippen startet, nochmal tippen beendet.
+  Die Titelzeile des PTT-Felds zeigt immer, welcher Modus gerade gilt. Nach `--tx-limit` Sekunden (Standard 90) wird automatisch freigegeben.
+- **Echte Hardware-Taste (empfohlen fürs Funkmikrofon):** per evdev, mit echtem Drücken und Loslassen, auch über SSH und auf der Textkonsole:
+  `./funk-tui --list-input-devices`, dann `./funk-tui --ptt-device /dev/input/by-id/<gerät> --ptt-key KEY_F13`. Der Benutzer braucht
+  Leserechte auf das Gerät (Gruppe `input`). USB-Fußschalter und Tasten-Mikrofone erscheinen meist als Tastatur.
+
+Auf der Textkonsole (ohne Unicode-Blockzeichen) hilft `--ascii`. Beim Beenden, bei SIGTERM und bei abgerissener SSH-Verbindung
+wird ein laufendes Senden sauber beendet und das Terminal zurückgesetzt.
+
 ## Audio-Geräte (Computer)
 
 Auf dem Einschalt-Bildschirm gibt es den Bereich „Audio-Geräte“ mit je einer Auswahl für Mikrofon und Lautsprecher

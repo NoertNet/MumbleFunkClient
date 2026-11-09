@@ -97,6 +97,40 @@ jobs:
             target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
+  # Terminal client for Linux (also for a Raspberry Pi). Built natively on both architectures; the
+  # aarch64 leg must never block a release, so its failure is tolerated.
+  cli:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            os: ubuntu-22.04
+          - arch: aarch64
+            os: ubuntu-22.04-arm
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.arch == 'aarch64' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: Set version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; else v="0.1.$GITHUB_RUN_NUMBER"; fi
+          echo "FUNK_VERSION=$v" >> "$GITHUB_ENV"
+      - run: cargo build --release -p funk-tui
+      - name: Package
+        run: |
+          ./target/release/funk-tui --version
+          mkdir pkg && cp target/release/funk-tui pkg/
+          tar czf MumbleFunk-CLI-Linux-${{ matrix.arch }}.tar.gz -C pkg funk-tui
+      - uses: actions/upload-artifact@v4
+        with:
+          name: funk-tui-${{ matrix.arch }}
+          path: MumbleFunk-CLI-Linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
   android:
     runs-on: ubuntu-24.04
     steps:
@@ -202,7 +236,7 @@ jobs:
   # through workflow artifacts. Branch pushes update the rolling pre-release "latest-dev";
   # pushing a tag like v0.2.0 creates a regular release.
   release:
-    needs: [test, windows, linux, android]
+    needs: [test, windows, linux, android, cli]
     if: >-
       github.event_name != 'pull_request' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/claude/') || startsWith(github.ref, 'refs/tags/v'))
@@ -225,8 +259,10 @@ jobs:
           pick '*.apk' MumbleFunk-Android.apk
           pick '*.deb' MumbleFunk-Linux.deb
           pick '*.AppImage' MumbleFunk-Linux.AppImage
+          pick '*Linux-x86_64.tar.gz' MumbleFunk-CLI-Linux-x86_64.tar.gz
+          pick '*Linux-aarch64.tar.gz' MumbleFunk-CLI-Linux-aarch64.tar.gz
           pick 'funk-probe.exe' funk-probe-Windows.exe
-          for f in MumbleFunk-Android.apk MumbleFunk-Windows-setup.exe MumbleFunk-Linux.deb MumbleFunk-Linux.AppImage; do
+          for f in MumbleFunk-Android.apk MumbleFunk-Windows-setup.exe MumbleFunk-Linux.deb MumbleFunk-Linux.AppImage MumbleFunk-CLI-Linux-x86_64.tar.gz; do
             test -f "out/$f" || { echo "required file missing: $f" >&2; exit 1; }
           done
           # latest.json is what the app fetches at start to learn whether a newer build exists.
@@ -252,6 +288,7 @@ jobs:
             echo "- **Android:** \`MumbleFunk-Android.apk\` herunterladen und installieren. Updates überschreiben die alte Version."
             echo "- **Windows:** \`MumbleFunk-Windows-setup.exe\` ausführen."
             echo "- **Ubuntu/Linux:** \`MumbleFunk-Linux.AppImage\` (ausführbar machen und starten) oder \`MumbleFunk-Linux.deb\` (\`sudo apt install ./MumbleFunk-Linux.deb\`)."
+            echo "- **Terminal (Linux):** \`MumbleFunk-CLI-Linux-x86_64.tar.gz\` (PC) bzw. \`-aarch64.tar.gz\` (Raspberry Pi mit 64-Bit-System): entpacken, \`./funk-tui --help\`."
             echo "- Die App prüft beim Start selbst, ob hier eine neuere Version liegt (\`latest.json\`)."
             echo "- Prüfsummen: \`SHA256SUMS.txt\`"
           } > notes.md

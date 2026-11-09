@@ -9,8 +9,7 @@
 mod meter;
 mod resample;
 
-pub use meter::BANDS;
-use meter::Meter;
+pub use meter::{BANDS, Meter};
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
