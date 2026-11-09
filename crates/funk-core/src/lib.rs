@@ -15,4 +15,4 @@ pub mod proto {
     }
 }
 
-pub use client::{Client, Config, Error, Event, connect};
+pub use client::{Client, Config, ConnectOptions, Error, Event, connect, connect_with};

@@ -34,6 +34,8 @@ PERMISSIONS = [
     "android.permission.FOREGROUND_SERVICE",
     "android.permission.FOREGROUND_SERVICE_MICROPHONE",
     "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+    # Only used when the user taps "Akku-Optimierung abschalten": opens Android's own dialog.
+    "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
 ]
 
 SERVICE_XML = (
@@ -70,8 +72,28 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    FunkDiag.log(this, "Activity onCreate (wiederhergestellt: ${savedInstanceState != null})")
     val missing = missingPermissions()
     if (missing.isNotEmpty()) permissions.launch(missing)
+  }
+
+  // The Rust side asks FunkBridge.isBackground() to decide how often to ping: rarer while the window is
+  // not visible. Start-up counts as visible, so an unknown state never makes the radio less responsive.
+  override fun onStart() {
+    super.onStart()
+    FunkBridge.uiVisible = true
+    FunkDiag.log(this, "Activity onStart")
+  }
+
+  override fun onStop() {
+    FunkBridge.uiVisible = false
+    FunkDiag.log(this, "Activity onStop")
+    super.onStop()
+  }
+
+  override fun onDestroy() {
+    FunkDiag.log(this, "Activity onDestroy (beendet: $isFinishing, Konfigurationswechsel: $isChangingConfigurations)")
+    super.onDestroy()
   }
 }
 """
@@ -79,17 +101,64 @@ class MainActivity : TauriActivity() {
 
 FUNK_BRIDGE_KT = """package net.noert.mumblefunk
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 
-/** Called from Rust (JNI, see src/android.rs). Starts, updates or stops the status service. */
+/** Called from Rust (JNI, see src/android.rs). Starts, updates or stops the status service, and more. */
 object FunkBridge {
+  /** True while the activity is started (window visible). Read by Rust through [isBackground]. */
+  @Volatile
+  @JvmField
+  var uiVisible: Boolean = true
+
+  @JvmStatic
+  fun isBackground(): Boolean = !uiVisible
+
+  @JvmStatic
+  fun log(ctx: Context, text: String) {
+    FunkDiag.log(ctx.applicationContext, text)
+  }
+
+  @JvmStatic
+  fun report(ctx: Context): String =
+    try {
+      FunkDiag.report(ctx.applicationContext)
+    } catch (e: Throwable) {
+      "Diagnose nicht verfügbar: $e"
+    }
+
+  /** Opens Android's dialog that exempts this app from battery optimisation (user decides). */
+  @JvmStatic
+  fun requestBatteryExemption(act: Activity): Boolean {
+    return try {
+      val pm = act.getSystemService(PowerManager::class.java)
+      val intent =
+        if (pm.isIgnoringBatteryOptimizations(act.packageName)) {
+          Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        } else {
+          Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + act.packageName))
+        }
+      act.startActivity(intent)
+      true
+    } catch (e: ActivityNotFoundException) {
+      false
+    } catch (e: SecurityException) {
+      false
+    }
+  }
+
   @JvmStatic
   fun update(ctx: Context, text: String, connected: Boolean) {
     val app = ctx.applicationContext
     if (!connected) {
+      FunkDiag.log(app, "Dienst wird beendet")
       app.stopService(Intent(app, FunkService::class.java))
       return
     }
@@ -104,7 +173,138 @@ object FunkBridge {
       }
     } catch (e: Exception) {
       Log.w("FunkBridge", "cannot start status service", e)
+      FunkDiag.log(app, "Dienst konnte nicht gestartet werden: $e")
     }
+  }
+}
+"""
+
+FUNK_DIAG_KT = """package net.noert.mumblefunk
+
+import android.app.ActivityManager
+import android.app.usage.UsageStatsManager
+import android.content.Context
+import android.os.Build
+import android.os.Debug
+import android.os.PowerManager
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/**
+ * Small persistent event log plus a snapshot of everything that can explain why Android stops or
+ * restricts the app. Contains no passwords or other secrets: only lifecycle events and error texts.
+ */
+object FunkDiag {
+  private const val FILE = "diag.log"
+  private const val MAX_BYTES = 48 * 1024
+  private val lock = Any()
+
+  private fun stamp(ms: Long): String = SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(Date(ms))
+
+  fun log(ctx: Context, msg: String) {
+    synchronized(lock) {
+      try {
+        val f = File(ctx.filesDir, FILE)
+        if (f.exists() && f.length() > MAX_BYTES) {
+          // keep the newest half, starting at a line boundary
+          val tail = f.readText().takeLast(MAX_BYTES / 2)
+          f.writeText(tail.substringAfter('\\n', tail))
+        }
+        f.appendText(stamp(System.currentTimeMillis()) + " " + msg + "\\n")
+      } catch (_: Throwable) {
+        // logging must never disturb the radio
+      }
+    }
+  }
+
+  private fun bucketName(b: Int): String =
+    when (b) {
+      10 -> "ACTIVE"
+      20 -> "WORKING_SET"
+      30 -> "FREQUENT"
+      40 -> "RARE"
+      45 -> "RESTRICTED"
+      50 -> "NEVER"
+      else -> "UNBEKANNT($b)"
+    }
+
+  private fun reasonName(r: Int): String =
+    when (r) {
+      android.app.ApplicationExitInfo.REASON_ANR -> "ANR"
+      android.app.ApplicationExitInfo.REASON_CRASH -> "CRASH"
+      android.app.ApplicationExitInfo.REASON_CRASH_NATIVE -> "CRASH_NATIVE"
+      android.app.ApplicationExitInfo.REASON_DEPENDENCY_DIED -> "DEPENDENCY_DIED"
+      android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "EXCESSIVE_RESOURCE_USAGE"
+      android.app.ApplicationExitInfo.REASON_EXIT_SELF -> "EXIT_SELF"
+      android.app.ApplicationExitInfo.REASON_FREEZER -> "FREEZER"
+      android.app.ApplicationExitInfo.REASON_INITIALIZATION_FAILURE -> "INITIALIZATION_FAILURE"
+      android.app.ApplicationExitInfo.REASON_LOW_MEMORY -> "LOW_MEMORY"
+      android.app.ApplicationExitInfo.REASON_OTHER -> "OTHER"
+      android.app.ApplicationExitInfo.REASON_PERMISSION_CHANGE -> "PERMISSION_CHANGE"
+      android.app.ApplicationExitInfo.REASON_SIGNALED -> "SIGNALED"
+      android.app.ApplicationExitInfo.REASON_USER_REQUESTED -> "USER_REQUESTED"
+      android.app.ApplicationExitInfo.REASON_USER_STOPPED -> "USER_STOPPED"
+      else -> "UNBEKANNT($r)"
+    }
+
+  fun report(ctx: Context): String {
+    val sb = StringBuilder()
+    val pkg = ctx.packageName
+    try {
+      val pi = ctx.packageManager.getPackageInfo(pkg, 0)
+      sb.append("Mumble Funk ").append(pi.versionName).append('\\n')
+    } catch (_: Throwable) {
+    }
+    sb.append("Gerät: ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})\\n")
+    val pm = ctx.getSystemService(PowerManager::class.java)
+    val am = ctx.getSystemService(ActivityManager::class.java)
+    sb.append("Akku-Optimierung für die App abgeschaltet: ${pm.isIgnoringBatteryOptimizations(pkg)}\\n")
+    sb.append("Energiesparmodus: ${pm.isPowerSaveMode}, Doze: ${pm.isDeviceIdleMode}\\n")
+    if (Build.VERSION.SDK_INT >= 28) {
+      sb.append("Hintergrund eingeschränkt: ${am.isBackgroundRestricted}\\n")
+      try {
+        val usm = ctx.getSystemService(UsageStatsManager::class.java)
+        sb.append("Standby-Bucket: ${bucketName(usm.appStandbyBucket)}\\n")
+      } catch (_: Throwable) {
+      }
+    }
+    sb.append("Dienst läuft: ${FunkService.running}, Fenster sichtbar: ${FunkBridge.uiVisible}\\n")
+    try {
+      val mi = am.getProcessMemoryInfo(intArrayOf(android.os.Process.myPid()))[0]
+      val rt = Runtime.getRuntime()
+      sb.append(
+        "Speicher: ${mi.totalPss / 1024} MB gesamt (PSS), nativ ${Debug.getNativeHeapAllocatedSize() / 1048576} MB, " +
+          "Java ${(rt.totalMemory() - rt.freeMemory()) / 1048576} MB\\n"
+      )
+    } catch (_: Throwable) {
+    }
+    if (Build.VERSION.SDK_INT >= 30) {
+      try {
+        val exits = am.getHistoricalProcessExitReasons(pkg, 0, 6)
+        sb.append("Letzte Prozess-Enden (neueste zuerst):\\n")
+        if (exits.isEmpty()) sb.append("  keine\\n")
+        for (i in exits) {
+          sb.append(
+            "  ${stamp(i.timestamp)} ${reasonName(i.reason)} status=${i.status} importance=${i.importance} " +
+              "pss=${i.pss / 1024}MB rss=${i.rss / 1024}MB ${i.description ?: ""}\\n"
+          )
+        }
+      } catch (e: Throwable) {
+        sb.append("Prozess-Enden nicht lesbar: $e\\n")
+      }
+    }
+    sb.append("\\nEreignisse (neueste unten):\\n")
+    synchronized(lock) {
+      try {
+        val lines = File(ctx.filesDir, FILE).readLines()
+        for (l in lines.takeLast(60)) sb.append(l).append('\\n')
+      } catch (_: Throwable) {
+        sb.append("  (noch keine)\\n")
+      }
+    }
+    return sb.toString()
   }
 }
 """
@@ -182,6 +382,7 @@ class FunkService : Service() {
     }
     ServiceCompat.startForeground(this, NOTIFICATION_ID, build(this), types)
     running = true
+    FunkDiag.log(this, "Dienst gestartet (Typen $types)")
     acquireLocks()
     return START_NOT_STICKY
   }
@@ -207,6 +408,7 @@ class FunkService : Service() {
 
   override fun onDestroy() {
     running = false
+    FunkDiag.log(this, "Dienst beendet")
     wakeLock?.let { if (it.isHeld) it.release() }
     wifiLock?.let { if (it.isHeld) it.release() }
     wakeLock = null
@@ -272,6 +474,7 @@ def patch_activity() -> None:
         fail(f"{ACTIVITY} not found")
     ACTIVITY.write_text(ACTIVITY_KT, encoding="utf-8")
     (KOTLIN_DIR / "FunkBridge.kt").write_text(FUNK_BRIDGE_KT, encoding="utf-8")
+    (KOTLIN_DIR / "FunkDiag.kt").write_text(FUNK_DIAG_KT, encoding="utf-8")
     (KOTLIN_DIR / "FunkService.kt").write_text(FUNK_SERVICE_KT, encoding="utf-8")
 
 

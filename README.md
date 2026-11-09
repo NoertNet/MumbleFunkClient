@@ -100,6 +100,22 @@ Server, Rufzeichen, Geräte und Zertifikat werden in `~/.config/mumble-funk/cli.
 Auf der Textkonsole (ohne Unicode-Blockzeichen) hilft `--ascii`. Beim Beenden, bei SIGTERM und bei abgerissener SSH-Verbindung
 wird ein laufendes Senden sauber beendet und das Terminal zurückgesetzt.
 
+## Zuverlässigkeit und Akku (alle Systeme, besonders Android)
+
+- **Automatische Wiederverbindung:** Bricht die Verbindung ab (WLAN-Wechsel, Standby, Serverneustart), baut die App sie selbst wieder auf
+  (nach 1, 2, 4, 8, dann alle 15 Sekunden) und tritt dem vorherigen Kanal wieder bei. Währenddessen steht „VERBINDUNG VERLOREN“ im Display und
+  PTT ist gesperrt; nach dem Wiederaufbau muss PTT neu gedrückt werden. Zurück zum Startbildschirm geht es nur bei „AUS“ oder einem
+  endgültigen Fehler (falsches Passwort, geändertes Zertifikat). Der Android-Dienst bleibt dabei bestehen.
+- **Gleicher Name auf zwei Geräten:** Der Server beendet die *ältere* Sitzung, wenn sich derselbe Name erneut anmeldet. Damit sich zwei Geräte
+  nicht endlos gegenseitig hinauswerfen, gibt eines nach zwei kurzen Abbrüchen auf und meldet den Grund; das andere bleibt verbunden.
+  Besser: pro Gerät ein eigenes Rufzeichen.
+- **Ping:** Bei sichtbarem Fenster alle 4 s (Latenzanzeige), im Hintergrund alle 8 s. Das bleibt unter dem 30-s-Limit des Servers und unter
+  der 13-s-Schwelle der Anzeige „kein Signal“; beim Zurückkehren in die App wird sofort gepingt. Eine tote Verbindung wird nach
+  2 × Intervall + 10 s erkannt.
+- **Android-Diagnose** (Startbildschirm → „Android-Diagnose“): zeigt, ob Android die App eingeschränkt oder beendet hat (letzte Prozess-Enden mit Grund,
+  Akku-Optimierung, Standby-Bucket, Speicherbedarf) und ein kleines Ereignisprotokoll. „Kopieren“ und an den Entwickler schicken; es stehen keine Passwörter darin.
+  „Akku-Optimierung abschalten“ öffnet den Android-Dialog (empfohlen, damit das System die App im Hintergrund nicht einschränkt).
+
 ## Globaler PTT-Hotkey (Computer)
 
 Auf dem Einschalt-Bildschirm unter „Globaler PTT-Hotkey“ lässt sich eine Taste festlegen („Taste aufnehmen“), mit der man auch bei

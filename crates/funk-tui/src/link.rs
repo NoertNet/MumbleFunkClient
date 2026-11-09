@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use funk_audio::{Audio, DevicePrefs, Meter, Shared};
 use funk_core::voice::{FRAME_SAMPLES, Mixer, SAMPLE_RATE, Transmitter, decode_packet};
-use funk_core::{Client, Config, Event};
+use funk_core::{Client, Config, ConnectOptions, Event};
 
 use crate::app::Msg;
 
@@ -51,7 +51,9 @@ pub fn connect(opts: &LinkOpts, tx: Sender<Msg>) -> Result<Link, LinkError> {
         tokens: vec![],
         pinned_sha256: opts.pin,
     };
-    let (client, mut events) = rt.block_on(funk_core::connect(cfg)).map_err(LinkError::Connect)?;
+    let (client, mut events) = rt
+        .block_on(funk_core::connect_with(cfg, ConnectOptions { auto_reconnect: true, ..Default::default() }))
+        .map_err(LinkError::Connect)?;
     let shared = Arc::new(Shared { tx: Mutex::new(Transmitter::new().map_err(|e| LinkError::Audio(e.to_string()))?), mixer: Mutex::new(Mixer::new()) });
     let stop = Arc::new(AtomicBool::new(false));
 
@@ -77,6 +79,17 @@ pub fn connect(opts: &LinkOpts, tx: Sender<Msg>) -> Result<Link, LinkError> {
                     }
                     Event::PermissionDenied(r) => {
                         let _ = tx.send(Msg::Notice(r));
+                    }
+                    Event::Reconnecting { attempt, reason } => {
+                        if attempt == 0 {
+                            let _ = tx.send(Msg::Reconnecting(true));
+                            let _ = tx.send(Msg::Notice(format!("VERBINDUNG VERLOREN: {}", reason.unwrap_or_default())));
+                        }
+                    }
+                    Event::Reconnected => {
+                        let _ = tx.send(Msg::Reconnecting(false));
+                        let _ = tx.send(Msg::State(Box::new(client.state())));
+                        let _ = tx.send(Msg::Notice("WIEDER VERBUNDEN".into()));
                     }
                     Event::Disconnected(r) => {
                         let _ = tx.send(Msg::Disconnected(r));

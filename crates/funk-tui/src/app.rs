@@ -21,6 +21,8 @@ pub enum Msg {
     Notice(String),
     /// Hardware PTT key (evdev): true = pressed.
     HardwarePtt(bool),
+    /// The connection was lost (true) / is back (false). Transmitting must stop when it is lost.
+    Reconnecting(bool),
     Disconnected(Option<String>),
 }
 
@@ -31,6 +33,8 @@ pub enum Mode {
     Rx,
     /// We press PTT while someone else is speaking (simplex: the server rejects us).
     Busy,
+    /// Connection lost, being re-established.
+    Lost,
 }
 
 pub struct App {
@@ -50,6 +54,7 @@ pub struct App {
     pub devices: String,
     pub list_open: bool,
     pub list_sel: usize,
+    pub reconnecting: bool,
     /// Set when the connection ended: `Some(reason)`.
     pub disconnected: Option<Option<String>>,
 }
@@ -71,6 +76,7 @@ impl App {
             devices,
             list_open: false,
             list_sel: 0,
+            reconnecting: false,
             disconnected: None,
         }
     }
@@ -84,6 +90,9 @@ impl App {
     }
 
     pub fn mode(&self) -> Mode {
+        if self.reconnecting {
+            return Mode::Lost;
+        }
         let rx = !self.others_speaking().is_empty();
         match (self.tx, rx) {
             (true, true) => Mode::Busy,
@@ -166,6 +175,13 @@ impl App {
             }
             Msg::Latency(ms) => self.latency = Some((ms, now)),
             Msg::Notice(t) => self.set_notice(t, now),
+            Msg::Reconnecting(lost) => {
+                self.reconnecting = lost;
+                if lost {
+                    self.speaking.clear();
+                    self.latency = None;
+                }
+            }
             Msg::Disconnected(r) => self.disconnected = Some(r),
             Msg::HardwarePtt(_) => {} // handled by the main loop, which owns the PTT state machine
         }
@@ -225,6 +241,18 @@ mod tests {
         assert_eq!(a.mode(), Mode::Busy);
         a.speaking = vec![1];
         assert_eq!(a.mode(), Mode::Tx, "own voice is not 'someone else'");
+    }
+
+    #[test]
+    fn lost_connection_overrides_everything_and_clears_speakers() {
+        let mut a = app();
+        a.speaking = vec![2];
+        a.tx = true;
+        a.apply(Msg::Reconnecting(true), Instant::now());
+        assert_eq!(a.mode(), Mode::Lost);
+        assert!(a.speaking.is_empty());
+        a.apply(Msg::Reconnecting(false), Instant::now());
+        assert_eq!(a.mode(), Mode::Tx, "back to normal; tx is cleared by the main loop, not by the state");
     }
 
     #[test]

@@ -1,12 +1,13 @@
 //! One connected session: protocol client, audio streams and the event pump to the UI.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc;
 
 use funk_audio::{Audio, DevicePrefs, Level, Shared};
 use funk_core::voice::{Mixer, Transmitter, decode_packet};
-use funk_core::{Client, Config, Error, Event};
+use funk_core::{Client, Config, ConnectOptions, Error, Event};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
@@ -68,6 +69,8 @@ pub struct Session {
     pump: tauri::async_runtime::JoinHandle<()>,
     status_tx: UnboundedSender<StatusInput>,
     pub audio: AudioDto,
+    /// True while the connection is lost and being re-established.
+    reconnecting: Arc<AtomicBool>,
 }
 
 fn dto_of(client: &Client) -> StateDto {
@@ -110,7 +113,10 @@ impl Session {
             tokens: vec![],
             pinned_sha256: pin,
         };
-        let (client, mut events) = funk_core::connect(cfg).await.map_err(|e| match e {
+        // Reconnect automatically; ping less often while the window is not visible (still well inside the
+        // server's 30 s silence limit and the UI's 13 s "no signal" threshold).
+        let opts = ConnectOptions { auto_reconnect: true, is_background: Arc::new(android::is_background), ..Default::default() };
+        let (client, mut events) = funk_core::connect_with(cfg, opts).await.map_err(|e| match e {
             Error::PinMismatch => "PIN_MISMATCH".to_string(),
             Error::Rejected(r) => format!("Server hat die Anmeldung abgelehnt: {r}"),
             Error::Dns(m) => format!("Server-Adresse nicht gefunden ({m}). Stimmt der Servername?"),
@@ -195,19 +201,23 @@ impl Session {
             });
         }
 
+        let reconnecting = Arc::new(AtomicBool::new(false));
         let pump = {
-            let (app, shared, client) = (app.clone(), shared.clone(), client.clone());
+            let (app, shared, client, reconnecting) = (app.clone(), shared.clone(), client.clone(), reconnecting.clone());
             tauri::async_runtime::spawn(async move {
                 let (mut speaking, mut tx_on, mut last_status) = (Vec::<u32>::new(), false, String::new());
+                let mut lost = false;
                 // Updates the Android notification (no-op elsewhere); only calls out when text changed.
-                let mut refresh = |client: &Client, speaking: &[u32], tx_on: bool| {
-                    let line = status_line(&client.state(), speaking, tx_on);
+                // While the connection is lost the notification keeps saying so (and the foreground
+                // service stays up, otherwise it could not be restarted from the background).
+                let mut refresh = |client: &Client, speaking: &[u32], tx_on: bool, lost: bool| {
+                    let line = if lost { "Verbindung verloren – verbinde neu …".to_string() } else { status_line(&client.state(), speaking, tx_on) };
                     if line != last_status {
                         android::update(&line, true);
                         last_status = line;
                     }
                 };
-                refresh(&client, &speaking, tx_on);
+                refresh(&client, &speaking, tx_on, lost);
                 loop {
                     tokio::select! {
                         Some(input) = status_rx.recv() => {
@@ -215,7 +225,7 @@ impl Session {
                                 StatusInput::Speaking(s) => speaking = s,
                                 StatusInput::Tx(t) => tx_on = t,
                             }
-                            refresh(&client, &speaking, tx_on);
+                            refresh(&client, &speaking, tx_on, lost);
                         }
                         ev = events.recv() => {
                             let Some(ev) = ev else { break };
@@ -223,7 +233,7 @@ impl Session {
                                 Event::Connected { .. } => {}
                                 Event::ChannelUpdated(_) | Event::UserUpdated(_) | Event::UserRemoved(_) => {
                                     let _ = app.emit("state", dto_of(&client));
-                                    refresh(&client, &speaking, tx_on);
+                                    refresh(&client, &speaking, tx_on, lost);
                                 }
                                 Event::Voice(b) => {
                                     if let Some(p) = decode_packet(&b) {
@@ -247,7 +257,35 @@ impl Session {
                                 Event::PermissionDenied(r) => {
                                     let _ = app.emit("notice", r);
                                 }
+                                Event::Reconnecting { attempt, reason } => {
+                                    if attempt == 0 {
+                                        // Whatever was being transmitted is over; people who spoke are gone with the
+                                        // old session. A new PTT press is needed after the reconnect.
+                                        reconnecting.store(true, Ordering::SeqCst);
+                                        lost = true;
+                                        speaking.clear();
+                                        crate::reset_ptt(&app);
+                                        if let Ok(mut m) = shared.mixer.lock() {
+                                            *m = Mixer::new();
+                                        }
+                                        android::log(&format!("Verbindung verloren: {}", reason.as_deref().unwrap_or("-")));
+                                        let _ = app.emit("reconnecting", serde_json::json!({ "attempt": attempt, "reason": reason }));
+                                    } else if attempt == 1 || attempt % 5 == 0 {
+                                        android::log(&format!("Wiederverbindung Versuch {attempt}: {}", reason.as_deref().unwrap_or("-")));
+                                    }
+                                    refresh(&client, &speaking, tx_on, lost);
+                                }
+                                Event::Reconnected => {
+                                    reconnecting.store(false, Ordering::SeqCst);
+                                    lost = false;
+                                    android::log("Wieder verbunden");
+                                    let _ = app.emit("reconnected", ());
+                                    let _ = app.emit("state", dto_of(&client));
+                                    refresh(&client, &speaking, tx_on, lost);
+                                }
                                 Event::Disconnected(reason) => {
+                                    android::log(&format!("Verbindung beendet: {}", reason.as_deref().unwrap_or("-")));
+                                    reconnecting.store(false, Ordering::SeqCst);
                                     let _ = app.emit("disconnected", reason);
                                     break;
                                 }
@@ -259,7 +297,12 @@ impl Session {
             })
         };
 
-        Ok(Session { client, shared, _audio_stop: stop_tx, pump, status_tx, audio: audio_dto })
+        android::log(&format!("Verbunden mit {}:{}", args.host, args.port));
+        Ok(Session { client, shared, _audio_stop: stop_tx, pump, status_tx, audio: audio_dto, reconnecting })
+    }
+
+    pub fn is_reconnecting(&self) -> bool {
+        self.reconnecting.load(Ordering::SeqCst)
     }
 
     pub fn client(&self) -> Client {

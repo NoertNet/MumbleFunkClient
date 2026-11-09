@@ -7,6 +7,7 @@ let state = null;        // letzter Serverzustand (Kanäle, Benutzer)
 let speaking = [];       // Sessions, die gerade zu hören sind
 let pttDown = false;     // wir senden gerade (Fenster oder globaler Hotkey), vom Programm gemeldet
 let uiHeld = false;      // Knopf/Leertaste im Fenster wird gehalten
+let reconnecting = false; // Verbindung verloren, wird automatisch neu aufgebaut
 let latencyMs = null;    // letzte Ping-Laufzeit
 let latencyAt = 0;       // Zeitpunkt der letzten Antwort
 let username = '';
@@ -77,22 +78,23 @@ function render() {
   const channels = sortedChannels();
   const idx = channels.findIndex((c) => c.id === state.ownChannel);
   const own = channels[idx];
-  const mode = currentMode();
+  const mode = reconnecting ? 'lost' : currentMode();
   const others = othersSpeaking();
 
   $('radio').dataset.mode = mode;
-  $('lamp-net').classList.add('on');
+  $('lamp-net').classList.toggle('on', !reconnecting);
   $('lamp-rx').classList.toggle('on', mode === 'rx' || mode === 'busy');
   $('lamp-tx').classList.toggle('on', mode === 'tx');
 
   $('chan-idx').textContent = idx >= 0 ? `KANAL ${idx + 1}/${channels.length}` : 'KANAL';
   $('chan-name').textContent = own ? (own.name || 'Root') : '—';
-  $('mode').textContent = { idle: 'BEREIT', tx: 'SENDET', rx: 'EMPFANG', busy: 'BELEGT' }[mode];
+  $('mode').textContent = { idle: 'BEREIT', tx: 'SENDET', rx: 'EMPFANG', busy: 'BELEGT', lost: 'VERBINDUNG VERLOREN' }[mode];
   $('who-text').textContent = {
     idle: `ICH: ${username}`,
     tx: `ICH: ${username}`,
     rx: others.map(nameOf).join(', '),
     busy: `${others.map(nameOf).join(', ')} SENDET`,
+    lost: 'VERBINDE NEU …',
   }[mode];
 
   // Teilnehmerliste im Display
@@ -117,6 +119,7 @@ function render() {
     return li;
   }));
 
+  $('ptt').disabled = reconnecting;
   $('ptt').classList.toggle('down', pttDown);
   $('ptt').setAttribute('aria-pressed', String(pttDown));
   $('ptt-label').textContent = pttDown ? (mode === 'busy' ? 'BELEGT' : 'SENDET') : 'PTT';
@@ -150,7 +153,7 @@ function setPtt(down) {
 
 function resetRadio() {
   setPtt(false);
-  uiHeld = false; pttDown = false;
+  uiHeld = false; pttDown = false; reconnecting = false;
   state = null; speaking = []; latencyMs = null; latencyAt = 0; listOpen = false;
   $('channels').hidden = true;
   $('chan-list-btn').setAttribute('aria-expanded', 'false');
@@ -398,6 +401,41 @@ $('hotkey-clear').addEventListener('click', async () => {
   try { renderHotkey(await invoke('set_hotkey', { spec: null })); hotkeyMessage('Hotkey entfernt.', false); } catch (err) { hotkeyMessage(String(err), true); }
 });
 
+/* ---------- Android-Diagnose ---------- */
+
+function diagMessage(text) { $('diag-msg').textContent = text || ''; }
+
+async function loadDiag() {
+  try {
+    const text = await invoke('get_diagnostics');
+    if (text == null) return false;      // kein Android
+    $('diag-box').hidden = false;
+    $('diag-text').textContent = text;
+    return true;
+  } catch { return false; }
+}
+
+$('diag-box').addEventListener('toggle', () => { if ($('diag-box').open) loadDiag(); });
+$('diag-refresh').addEventListener('click', async () => { await loadDiag(); diagMessage('Aktualisiert.'); });
+$('diag-copy').addEventListener('click', async () => {
+  const text = $('diag-text').textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    diagMessage('Kopiert. Jetzt in eine Nachricht einfügen.');
+  } catch {
+    // Ersatz, falls die Zwischenablage-Schnittstelle gesperrt ist: Text markieren
+    const range = document.createRange();
+    range.selectNodeContents($('diag-text'));
+    const sel = window.getSelection();
+    sel.removeAllRanges(); sel.addRange(range);
+    diagMessage('Text ist markiert: lange drücken und „Kopieren“ wählen.');
+  }
+});
+$('battery-btn').addEventListener('click', async () => {
+  const ok = await invoke('request_battery_exemption').catch(() => false);
+  diagMessage(ok ? 'Android-Dialog geöffnet. Dort „Zulassen“ wählen.' : 'Der Dialog ließ sich nicht öffnen. Einstellungen → Apps → Mumble Funk → Akku → „Uneingeschränkt“.');
+});
+
 /* ---------- Gespeicherte Server ---------- */
 
 let profiles = [];
@@ -497,7 +535,10 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => { if (e.code === 'Space') setPtt(false); });
 // Sender nie offen lassen, wenn das Fenster den Fokus verliert.
 window.addEventListener('blur', () => setPtt(false));
-document.addEventListener('visibilitychange', () => { if (document.hidden) setPtt(false); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) setPtt(false);
+  else invoke('ui_visible').catch(() => {}); // im Hintergrund wird seltener gepingt: Anzeige sofort auffrischen
+});
 
 $('chan-prev').addEventListener('click', () => stepChannel(-1));
 $('chan-next').addEventListener('click', () => stepChannel(1));
@@ -525,6 +566,12 @@ $('disconnect-btn').addEventListener('click', async () => {
 
 listen('state', (e) => { state = e.payload; render(); });
 listen('speaking', (e) => { speaking = e.payload; render(); });
+listen('reconnecting', () => {
+  // Alles Laufende ist beendet (das Programm hat PTT freigegeben); nach dem Wiederaufbau neu drücken.
+  reconnecting = true; uiHeld = false; pttDown = false; speaking = []; latencyMs = null; latencyAt = 0;
+  render();
+});
+listen('reconnected', () => { reconnecting = false; render(); });
 listen('ptt-state', (e) => { pttDown = !!e.payload; render(); });
 listen('levels', (e) => onLevels(e.payload));
 listen('latency', (e) => { latencyMs = e.payload; latencyAt = Date.now(); renderSignal(); });
@@ -544,6 +591,7 @@ invoke('load_settings').then((s) => applySettings(s)).catch(() => {});
 buildEq();
 loadDevices();
 loadHotkey();
+loadDiag();
 
 // Version anzeigen, danach einmal still nach einem Update sehen.
 initVersion().then(() => checkUpdate(false));

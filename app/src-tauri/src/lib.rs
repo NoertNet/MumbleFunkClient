@@ -37,7 +37,7 @@ fn apply_ptt(app: &AppHandle, effect: Effect) {
     let _ = app.emit("ptt-state", transmitting);
 }
 
-fn reset_ptt(app: &AppHandle) {
+pub(crate) fn reset_ptt(app: &AppHandle) {
     let eff = app.state::<App>().sources.lock().unwrap().reset();
     apply_ptt(app, eff);
 }
@@ -92,8 +92,11 @@ async fn join_channel(state: State<'_, App>, id: u32) -> Result<(), String> {
 /// it with a terminator packet, unless the global hotkey is still held.
 #[tauri::command]
 fn ptt(app: AppHandle, state: State<'_, App>, down: bool) -> Result<(), String> {
-    if state.session.lock().unwrap().is_none() {
-        return Err("not connected".into());
+    match state.session.lock().unwrap().as_ref() {
+        None => return Err("not connected".into()),
+        // Nothing to transmit on while the connection is being re-established. Releasing is always fine.
+        Some(s) if down && s.is_reconnecting() => return Err("Verbindung wird neu aufgebaut".into()),
+        Some(_) => {}
     }
     let eff = state.sources.lock().unwrap().ui(down);
     apply_ptt(&app, eff);
@@ -234,6 +237,26 @@ fn resume_hotkey(app: AppHandle, state: State<'_, App>) -> HotkeyDto {
     }
 }
 
+/// The UI became visible again: refresh the latency readout right away (pings are rarer in the background).
+#[tauri::command]
+fn ui_visible(state: State<'_, App>) {
+    if let Some(s) = state.session.lock().unwrap().as_ref() {
+        s.client().ping_now();
+    }
+}
+
+/// Android only: state of battery restrictions, memory, the last process exits and an event log, as text.
+#[tauri::command]
+async fn get_diagnostics() -> Option<String> {
+    tauri::async_runtime::spawn_blocking(android::report).await.ok().flatten()
+}
+
+/// Android only: opens the system dialog that lets the user exempt the app from battery optimisation.
+#[tauri::command]
+fn request_battery_exemption() -> bool {
+    android::request_battery_exemption()
+}
+
 #[tauri::command]
 fn load_settings(app: AppHandle) -> settings::Settings {
     settings::load(&app)
@@ -347,11 +370,14 @@ pub fn run() {
     builder
         .invoke_handler(tauri::generate_handler![
             connect, disconnect, join_channel, ptt, load_settings, forget_profile, list_audio_devices, set_audio_devices,
-            get_hotkey, set_hotkey, pause_hotkey, resume_hotkey, app_version, check_update, open_update_url
+            get_hotkey, set_hotkey, pause_hotkey, resume_hotkey, ui_visible, get_diagnostics, request_battery_exemption, app_version, check_update, open_update_url
         ])
         .on_window_event(|w, ev| {
             if let tauri::WindowEvent::Destroyed = ev {
                 if let Some(s) = w.app_handle().state::<App>().session.lock().unwrap().take() {
+                    // On Android this also happens when the system or the user ends the activity while
+                    // the connection is up; the log makes such cases visible in the diagnostics.
+                    android::log("Fenster zerstört: Verbindung wird beendet");
                     s.close();
                 }
             }

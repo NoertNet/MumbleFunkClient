@@ -328,8 +328,14 @@ fn event_loop(
             dirty = true;
             match msg {
                 Msg::HardwarePtt(down) => {
-                    let a = if down { ptt.hardware_down(now) } else { ptt.hardware_up() };
+                    // No new transmission while the connection is being re-established.
+                    let a = if down && !app.reconnecting { ptt.hardware_down(now) } else if down { Action::None } else { ptt.hardware_up() };
                     apply_action(a, app, link, now);
+                }
+                Msg::Reconnecting(true) => {
+                    // Whatever was being transmitted is over; a fresh press is needed after the reconnect.
+                    apply_action(ptt.shutdown(), app, link, now);
+                    app.apply(Msg::Reconnecting(true), now);
                 }
                 other => app.apply(other, now),
             }
@@ -411,7 +417,13 @@ fn handle_key(key: ratatui::crossterm::event::KeyEvent, app: &mut App, link: &Li
             let own = app.st.own_channel();
             app.list_sel = app.channels_sorted().iter().position(|c| Some(c.id) == own).unwrap_or(0);
         }
-        KeyCode::Char(' ') | KeyCode::Enter => apply_action(ptt.key_press(now), app, link, now),
+        KeyCode::Char(' ') | KeyCode::Enter => {
+            if app.reconnecting {
+                app.set_notice("VERBINDUNG WIRD NEU AUFGEBAUT: PTT GESPERRT", now);
+            } else {
+                apply_action(ptt.key_press(now), app, link, now);
+            }
+        }
         _ => {}
     }
     false

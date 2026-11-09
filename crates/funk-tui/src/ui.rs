@@ -17,7 +17,7 @@ pub const MIN_HEIGHT: u16 = 20;
 
 pub fn mode_color(mode: Mode) -> Color {
     match mode {
-        Mode::Idle => Color::Yellow,
+        Mode::Idle | Mode::Lost => Color::Yellow,
         Mode::Tx => Color::Green,
         Mode::Rx | Mode::Busy => Color::Red,
     }
@@ -29,6 +29,7 @@ fn mode_text(mode: Mode) -> &'static str {
         Mode::Tx => "SENDET",
         Mode::Rx => "EMPFANG",
         Mode::Busy => "BELEGT",
+        Mode::Lost => "VERBINDE NEU",
     }
 }
 
@@ -71,7 +72,7 @@ fn lamp(on: bool, color: Color, label: &str, ascii: bool) -> Vec<Span<'static>> 
 
 fn draw_display(f: &mut Frame, area: Rect, app: &App, mode: Mode, color: Color, now: Instant, ascii: bool) {
     let mut lamps: Vec<Span> = Vec::new();
-    lamps.extend(lamp(true, Color::Yellow, "NET", ascii));
+    lamps.extend(lamp(mode != Mode::Lost, Color::Yellow, "NET", ascii));
     lamps.extend(lamp(matches!(mode, Mode::Rx | Mode::Busy), Color::Red, "RX", ascii));
     lamps.extend(lamp(mode == Mode::Tx, Color::Green, "TX", ascii));
     let block = Block::bordered()
@@ -134,6 +135,7 @@ fn draw_display(f: &mut Frame, area: Rect, app: &App, mode: Mode, color: Color, 
         Mode::Idle | Mode::Tx => format!("ICH: {}", app.username),
         Mode::Rx => others.to_uppercase(),
         Mode::Busy => format!("{} SENDET", others.to_uppercase()),
+        Mode::Lost => "VERBINDUNG VERLOREN".to_string(),
     };
     f.render_widget(Paragraph::new(who_text).alignment(Alignment::Center).style(Style::new().fg(color)), who);
 
@@ -224,6 +226,7 @@ fn draw_ptt(f: &mut Frame, area: Rect, app: &App, mode: Mode) {
     let (text, style) = match mode {
         Mode::Tx => ("S E N D E T", Style::new().fg(Color::Green).add_modifier(Modifier::BOLD)),
         Mode::Busy => ("BELEGT", Style::new().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        Mode::Lost => ("PTT GESPERRT", Style::new().fg(Color::DarkGray)),
         _ => ("P T T", Style::new().add_modifier(Modifier::BOLD)),
     };
     let [_, mid, _] = Layout::vertical([Constraint::Min(0), Constraint::Length(1), Constraint::Min(0)]).areas(inner);
@@ -302,6 +305,17 @@ mod tests {
         assert!(s.contains("BRAVO2"), "{s}");
         // top-left border corner carries the mode colour
         assert_eq!(fg_of(&a, 70, 26, 0, 0), Color::Red);
+    }
+
+    #[test]
+    fn lost_connection_is_shown_in_amber_with_the_net_lamp_off() {
+        let mut a = sample_app();
+        a.reconnecting = true;
+        let s = render(&a, 70, 26, false);
+        assert!(s.contains("V E R B I N D E"), "{s}");
+        assert!(s.contains("VERBINDUNG VERLOREN"), "{s}");
+        assert!(s.contains("○ NET") && s.contains("PTT GESPERRT"), "{s}");
+        assert_eq!(fg_of(&a, 70, 26, 0, 0), Color::Yellow);
     }
 
     #[test]

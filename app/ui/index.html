@@ -46,6 +46,17 @@
           <button id="dev-refresh" type="button" class="key small">Liste aktualisieren</button>
           <p class="hint">Gilt ab der nächsten Verbindung. Ohne Auswahl wird das Standardgerät des Systems benutzt.</p>
         </details>
+        <details id="diag-box" hidden>
+          <summary>Android-Diagnose</summary>
+          <p class="hint">Zeigt, ob Android die App einschränkt oder beendet hat (Prozess-Enden, Akku-Einstellungen, Speicher) und was zuletzt passiert ist. Bei Problemen „Kopieren“ und an den Entwickler schicken; es stehen keine Passwörter darin.</p>
+          <pre id="diag-text" tabindex="0"></pre>
+          <div class="row">
+            <button id="diag-refresh" type="button" class="key small">Aktualisieren</button>
+            <button id="diag-copy" type="button" class="key small">Kopieren</button>
+          </div>
+          <button id="battery-btn" type="button" class="key small">Akku-Optimierung abschalten</button>
+          <p id="diag-msg" class="hint" role="status"></p>
+        </details>
         <details id="hotkey-box" hidden>
           <summary>Globaler PTT-Hotkey</summary>
           <p id="hotkey-current" class="hint">Aktuell: keiner</p>
