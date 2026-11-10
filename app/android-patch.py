@@ -49,11 +49,60 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 
+/** Seen from the page as window.FunkNative. The page tells us when the volume keys should act as PTT. */
+class FunkNative {
+  @JavascriptInterface
+  fun setVolumePtt(on: Boolean) {
+    FunkBridge.volumePtt = on
+  }
+}
+
 class MainActivity : TauriActivity() {
+  private var page: WebView? = null
+  private val heldKeys = HashSet<Int>()
+
+  override fun onWebViewCreate(webView: WebView) {
+    page = webView
+    webView.addJavascriptInterface(FunkNative(), "FunkNative")
+  }
+
+  private fun pageKey(down: Boolean) {
+    page?.post { page?.evaluateJavascript("window.__hwPtt&&window.__hwPtt($down)", null) }
+  }
+
+  // Volume keys act as push-to-talk while the radio screen is in front (and the user did not switch it off).
+  // Both keys are swallowed then, so the system volume UI stays quiet; Key repeat is ignored.
+  override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    val code = event.keyCode
+    if (FunkBridge.volumePtt && (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN)) {
+      if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+        if (heldKeys.isEmpty()) pageKey(true)
+        heldKeys.add(code)
+      } else if (event.action == KeyEvent.ACTION_UP) {
+        heldKeys.remove(code)
+        if (heldKeys.isEmpty()) pageKey(false)
+      }
+      return true
+    }
+    return super.dispatchKeyEvent(event)
+  }
+
+  // Never leave the transmitter open when the window goes away with a key still held.
+  override fun onPause() {
+    if (heldKeys.isNotEmpty()) {
+      heldKeys.clear()
+      pageKey(false)
+    }
+    super.onPause()
+  }
+
   // Results are not needed here: the app reports a clear error if something is missing.
   private val permissions =
     registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
@@ -120,6 +169,11 @@ object FunkBridge {
 
   @JvmStatic
   fun isBackground(): Boolean = !uiVisible
+
+  /** True while the volume keys should act as PTT (set by the page through FunkNative). */
+  @Volatile
+  @JvmField
+  var volumePtt: Boolean = false
 
   @JvmStatic
   fun log(ctx: Context, text: String) {
@@ -442,6 +496,8 @@ SIGNING_LINE = (
 
 PROGUARD_RULES = """# Looked up by name from Rust via JNI (src/android.rs); must survive minification.
 -keep class net.noert.mumblefunk.FunkBridge { *; }
+-keep class net.noert.mumblefunk.FunkNative { *; }
+-keepclassmembers class * { @android.webkit.JavascriptInterface <methods>; }
 -keep class net.noert.mumblefunk.FunkService { *; }
 -keep class net.noert.mumblefunk.MainActivity { *; }
 """

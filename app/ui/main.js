@@ -41,6 +41,27 @@ function initDesktopWindow() {
 function show(screen) {
   $('connect').hidden = screen !== 'connect';
   $('radio').hidden = screen !== 'radio';
+  syncVolPtt();
+}
+
+/* ---------- Android: Lautstärketaste als PTT (nur im Vordergrund, nur auf dem Funkgerät-Bildschirm) ---------- */
+
+const native = window.FunkNative;
+function volPttPref() {
+  try { return localStorage.getItem('volPtt') !== '0'; } catch { return true; }
+}
+function syncVolPtt() {
+  if (!native) return;
+  try { native.setVolumePtt(volPttPref() && !$('radio').hidden); } catch { /* ohne Brücke: Tasten bleiben Lautstärke */ }
+}
+window.__hwPtt = (down) => setPtt(!!down);
+if (native) {
+  $('keys-box').hidden = false;
+  $('vol-ptt').checked = volPttPref();
+  $('vol-ptt').addEventListener('change', () => {
+    try { localStorage.setItem('volPtt', $('vol-ptt').checked ? '1' : '0'); } catch { /* optional */ }
+    syncVolPtt();
+  });
 }
 
 function showError(msg) {
