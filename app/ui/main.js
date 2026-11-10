@@ -17,6 +17,25 @@ let pendingUpdate = null;
 
 const STALE_MS = 13000;  // Pings kommen alle 4 s; danach gilt die Verbindung als ohne Signal
 
+/* ---------- Desktop-Fenster: rahmenlos, per Gehäuse ziehbar ---------- */
+
+function initDesktopWindow() {
+  if (/Android/i.test(navigator.userAgent)) return;
+  const win = window.__TAURI__.window && window.__TAURI__.window.getCurrentWindow
+    ? window.__TAURI__.window.getCurrentWindow() : null;
+  if (!win) return;
+  document.documentElement.classList.add('desktop');
+  const act = (fn) => { try { Promise.resolve(win[fn]()).catch(() => {}); } catch (_) { /* ignorieren */ } };
+  document.querySelectorAll('.wc-min').forEach((b) => b.addEventListener('click', () => act('minimize')));
+  document.querySelectorAll('.wc-close').forEach((b) => b.addEventListener('click', () => act('close')));
+  // Ziehen: nur an freien Flächen des Gehäuses, nie an Bedienelementen oder Listen.
+  document.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || e.target.closest('button, input, select, textarea, a, summary, label, ul, ol, details, #ptt')) return;
+    if (!e.target.closest('.device')) return;
+    act('startDragging');
+  });
+}
+
 /* ---------- Anzeige-Hilfen ---------- */
 
 function show(screen) {
@@ -588,6 +607,7 @@ setInterval(() => { if (!$('radio').hidden) renderSignal(); }, 1000);
 
 invoke('load_settings').then((s) => applySettings(s)).catch(() => {});
 
+initDesktopWindow();
 buildEq();
 loadDevices();
 loadHotkey();
